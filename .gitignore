@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# project
+.venv/
+*.pt
+logs/
+.ruff_cache/
+.pytest_cache/
+
+# paper drafts stay local until review / 논문 원고는 심사 전까지 로컬에만
+docs/paper/
