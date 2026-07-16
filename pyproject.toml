@@ -1,0 +1,66 @@
+[project]
+name = "factor"
+version = "0.1.0"
+description = "Fiducial-Anchored Canonical views for calibration-free Transfer Of precise Robot manipulation"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "sxngt", email = "sxngt.dev@gmail.com" }]
+requires-python = ">=3.10"
+keywords = ["robotics", "sim-to-real", "pick-and-place", "fiducial", "imitation-learning", "reinforcement-learning"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Perception models and training. / 인식 모델·학습.
+perception = ["torch>=2.1", "opencv-python-headless>=4.8"]
+# Real-robot runtime (camera, fiducial detection). / 실기 런타임(카메라, 피듀셜 검출).
+real = ["opencv-python-headless>=4.8", "pillow>=10.0"]
+# ROS 2 driver and tools (factor-fr3-driver, factor-fr3-probe). rclpy, sensor_msgs, std_srvs,
+# control_msgs and rcl_interfaces come from the ROS 2 install (source its setup file), not from
+# pip; the vendor SDK (`fairino`, FAIRINO's fairino-python-sdk) is not on PyPI either.
+# ROS 2 드라이버·도구용. rclpy 등은 pip 가 아니라 ROS 2 설치(setup 파일 source)에서, 제조사 SDK
+# (`fairino`)도 PyPI 에 없다.
+ros = ["numpy>=1.24"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+factor-camera = "factor.real.camera_server:main"
+factor-fr3-check = "factor.robots.fr3.tools:check_main"
+factor-fr3-driver = "factor.robots.fr3.driver:main"
+factor-fr3-power = "factor.robots.fr3.tools:power_main"
+factor-fr3-probe = "factor.robots.fr3.tools:probe_main"
+factor-record = "factor.real.camera_server:record_main"
+factor-run = "factor.real.cli:main"
+factor-selfcalib = "factor.calib.run:main"
+factor-serve = "factor.perception.server:main"
+factor-train = "factor.perception.train:main"
+factor-view = "factor.real.viewer:main"
+
+[project.urls]
+Homepage = "https://github.com/sxngt/factor"
+
+[build-system]
+requires = ["uv_build>=0.12.8,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/factor/real/viewer.py" = ["E501"]  # embedded HTML/JS page / 내장 HTML·JS 페이지
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
