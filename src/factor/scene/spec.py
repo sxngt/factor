@@ -107,3 +107,111 @@ class RobotSpec:
     grasp: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class SceneSpec:
+    """Complete scene. / 전체 장면.
+
+    ``anchor_in_base`` is the 4x4 pose of the anchor (fiducial) frame in the robot base frame
+    as currently believed; the perception layer estimates the residual error of this pose.
+    ``camera_in_anchor`` is the nominal camera pose in the anchor frame used to build the
+    simulation twin.
+    """
+
+    robot: RobotSpec
+    camera: CameraSpec
+    fiducials: FiducialLayout
+    objects: tuple[ObjectSpec, ...]
+    anchor_in_base: np.ndarray
+    camera_in_anchor: np.ndarray
+    extras: dict = field(default_factory=dict)
+
+    def object(self, name: str) -> ObjectSpec:
+        for obj in self.objects:
+            if obj.name == name:
+                return obj
+        raise KeyError(name)
+
+
+def _pose_from_mapping(m: dict) -> np.ndarray:
+    """Build a 4x4 pose from ``{xyz: [...], rpy_deg: [...]}``. / 위치·RPY(도) 사전 → 4×4 포즈."""
+    xyz = np.asarray(m.get("xyz", (0.0, 0.0, 0.0)), dtype=float)
+    roll, pitch, yaw = np.radians(np.asarray(m.get("rpy_deg", (0.0, 0.0, 0.0)), dtype=float))
+    cr, sr, cp, sp, cy, sy = (
+        np.cos(roll),
+        np.sin(roll),
+        np.cos(pitch),
+        np.sin(pitch),
+        np.cos(yaw),
+        np.sin(yaw),
+    )
+    rot = np.array(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ]
+    )
+    pose = np.eye(4)
+    pose[:3, :3] = rot
+    pose[:3, 3] = xyz
+    return pose
+
+
+def load_scene(path: str | Path) -> SceneSpec:
+    """Read a scene specification from YAML. / YAML 장면 명세를 읽는다.
+
+    See ``configs/hanoi.yaml`` for the schema.
+    """
+    with open(path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+
+    cam = doc["camera"]
+    camera = CameraSpec(
+        width=int(cam["width"]),
+        height=int(cam["height"]),
+        fx=float(cam["fx"]),
+        fy=float(cam["fy"]),
+        cx=float(cam["cx"]),
+        cy=float(cam["cy"]),
+        dist=tuple(float(v) for v in cam.get("dist", ())),
+    )
+
+    fid = doc["fiducials"]
+    markers = tuple(
+        FiducialMarker(
+            marker_id=int(m["id"]), center=tuple(float(v) for v in m["center"]), size=float(m["size"])
+        )
+        for m in fid["markers"]
+    )
+    fiducials = FiducialLayout(dictionary=str(fid["dictionary"]), markers=markers)
+
+    rob = doc["robot"]
+    robot = RobotSpec(
+        name=str(rob["name"]),
+        urdf=str(rob["urdf"]),
+        joint_names=tuple(str(j) for j in rob["joint_names"]),
+        grip_offset=tuple(float(v) for v in rob.get("grip_offset", (0.0, 0.0, 0.0))),
+        kinematics=dict(rob.get("kinematics", {})),
+        grasp=dict(rob.get("grasp", {})),
+    )
+
+    objects = tuple(
+        ObjectSpec(
+            name=str(o["name"]),
+            asset=str(o["asset"]),
+            mass=float(o["mass"]),
+            grasp_half_gap=float(o["grasp_half_gap"]),
+            extents=tuple(float(v) for v in o.get("extents", (0.0, 0.0, 0.0))),
+        )
+        for o in doc.get("objects", ())
+    )
+
+    return SceneSpec(
+        robot=robot,
+        camera=camera,
+        fiducials=fiducials,
+        objects=objects,
+        anchor_in_base=_pose_from_mapping(doc["anchor_in_base"]),
+        camera_in_anchor=_pose_from_mapping(doc["camera_in_anchor"]),
+        extras=dict(doc.get("extras", {})),
+    )
