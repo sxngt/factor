@@ -1,0 +1,81 @@
+# Example scene: FAIRINO FR3 + DH AG-95, fixed webcam, ArUco anchor board, Tower of Hanoi rings.
+# 예시 장면: FR3 + AG-95, 고정 웹캠, ArUco 앵커 보드, 하노이 링.
+# Units: metres, degrees where the key says so.
+
+robot:
+  name: fr3_ag95
+  urdf: assets/urdf/fr3_ag95.urdf       # meshes through package:// URIs, see docs/ASSETS.md
+  joint_names: [j1, j2, j3, j4, j5, j6]
+  grip_offset: [0.0, 0.0, 0.0015]      # tool tip -> grip point (ring centre when held)
+  kinematics:
+    d1: 0.14
+    a2: -0.280491
+    a3: -0.239929
+    d4: 0.102452
+    d5: 0.102123
+    d6: 0.101
+    tool_length: 0.2045
+    mount_yaw_deg: 0.0
+    limits_deg: [[-175, 175], [-265, 85], [-150, 150], [-265, 85], [-175, 175], [-175, 175]]
+  grasp:
+    ik_branch: [0, 0, 1]
+    finger_axis: y
+    finger_sign: 1
+    finger_max: 0.0475
+    finger_clearance: 0.001
+    open_margin: 0.006
+    tip_above_bottom: 0.002
+
+camera:
+  width: 2592
+  height: 1944
+  fx: 1979.1152
+  fy: 1979.1152
+  cx: 1277.8775
+  cy: 1056.1204
+  dist: [0.033658, -0.036086, -0.005125, -0.002592, 0.000000]
+  # intrinsics: tools/webcam_calib.py 2026-10 (rms 0.74 px) / 웹캠 내부 파라미터
+
+fiducials:
+  dictionary: DICT_4X4_50
+  markers:                              # 40 mm markers of the printed tower mat (config/aruco/tower_mat.json)
+    - { id: 0, center: [-0.095, 0.055, 0.0], size: 0.040 }
+    - { id: 1, center: [0.095, 0.055, 0.0], size: 0.040 }
+    - { id: 2, center: [0.095, -0.055, 0.0], size: 0.040 }
+    - { id: 3, center: [-0.095, -0.055, 0.0], size: 0.040 }
+    - { id: 4, center: [0.000, 0.060, 0.0], size: 0.040 }
+    - { id: 5, center: [0.000, -0.060, 0.0], size: 0.040 }
+
+objects:
+  - { name: ring0, asset: assets/rings/ring0.usd, mass: 0.010, grasp_half_gap: 0.026, extents: [0.050, 0.050, 0.007] }
+  - { name: ring1, asset: assets/rings/ring1.usd, mass: 0.010, grasp_half_gap: 0.0235, extents: [0.045, 0.045, 0.007] }
+  - { name: ring2, asset: assets/rings/ring2.usd, mass: 0.010, grasp_half_gap: 0.021, extents: [0.040, 0.040, 0.007] }
+  - { name: ring3, asset: assets/rings/ring3.usd, mass: 0.010, grasp_half_gap: 0.0185, extents: [0.035, 0.035, 0.007] }
+  - { name: ring4, asset: assets/rings/ring4.usd, mass: 0.010, grasp_half_gap: 0.016, extents: [0.030, 0.030, 0.007] }
+  - { name: ring5, asset: assets/rings/ring5.usd, mass: 0.010, grasp_half_gap: 0.0135, extents: [0.025, 0.025, 0.007] }
+
+# Believed anchor pose in the robot base frame (from fiducial calibration). / 로봇 베이스 기준 앵커 포즈(피듀셜 보정값).
+anchor_in_base:
+  xyz: [-0.0733, -0.4811, 0.0239]
+  rpy_deg: [0.0, 0.0, -178.96]
+
+# Nominal camera pose in the anchor frame (used to build the simulation twin). / 앵커 기준 공칭 카메라 포즈(트윈용).
+camera_in_anchor:
+  xyz: [0.0723, 0.3906, 0.7113]            # the camera stands beyond the mat (anchor +y) and looks back at the robot
+  rpy_deg: [-152.318, -4.736, 175.000]
+
+extras:
+  task: hanoi
+  hanoi:
+    peg_spacing: 0.060
+    peg_row_offset: [0.0, 0.0]                            # the tower sits on the printed outline (user-confirmed); belief errors are corrected by the estimator
+    peg_height: 0.055
+    plate_thickness: 0.007
+    ring_height: 0.007
+    rings: [ring0, ring1, ring2, ring3, ring4, ring5]      # largest first; radii = extents / 2
+    base_z: -0.026                                        # robot base below the plate underside
+  sim:
+    robot_usd: assets/usd/fr3_ag95.usd                    # relative to --assets or absolute
+    ring_usds: [assets/usd/rings/ring0.usd, assets/usd/rings/ring1.usd, assets/usd/rings/ring2.usd,
+                assets/usd/rings/ring3.usd, assets/usd/rings/ring4.usd, assets/usd/rings/ring5.usd]
+    mat_usd: assets/usd/mat.usd
