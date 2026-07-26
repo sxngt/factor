@@ -83,3 +83,176 @@ def top_down_rotation(finger_axis: str = "y", sign: int = 1, yaw: float = 0.0) -
     return _rot_z(yaw)[:3, :3] @ rot
 
 
+class FR3Kinematics:
+    """Forward and fixed-branch inverse kinematics. / 정기구학과 고정 가지 역기구학."""
+
+    def __init__(self, params: FR3Params | None = None):
+        self.p = params or FR3Params()
+        self.limits = np.radians(np.asarray(self.p.limits_deg, dtype=float))
+
+    def tool_transform(self) -> np.ndarray:
+        """Flange -> tool. / 플랜지 → 툴."""
+        m = self.p.mount_yaw
+        rot = np.array([[math.cos(m), 0.0, -math.sin(m)], [math.sin(m), 0.0, math.cos(m)], [0.0, -1.0, 0.0]])
+        t = np.eye(4)
+        t[:3, :3] = rot
+        t[2, 3] = self.p.tool_length
+        return t
+
+    def flange(self, q: np.ndarray) -> np.ndarray:
+        """Base -> flange pose. / 베이스 → 플랜지."""
+        p = self.p
+        q = np.asarray(q, dtype=float)
+        return (
+            _rot_z(q[0])
+            @ _trans(0, 0, p.d1)
+            @ _rot_x(math.pi / 2)
+            @ _rot_z(q[1])
+            @ _trans(p.a2, 0, 0)
+            @ _rot_z(q[2])
+            @ _trans(p.a3, 0, 0)
+            @ _rot_z(q[3])
+            @ _trans(0, 0, p.d4)
+            @ _rot_x(math.pi / 2)
+            @ _rot_z(q[4])
+            @ _trans(0, 0, p.d5)
+            @ _rot_x(-math.pi / 2)
+            @ _rot_z(q[5])
+            @ _trans(0, 0, p.d6)
+        )
+
+    def tool(self, q: np.ndarray) -> np.ndarray:
+        """Base -> tool pose. / 베이스 → 툴."""
+        return self.flange(q) @ self.tool_transform()
+
+    def inverse(self, tool_pose: np.ndarray, branch: tuple[int, int, int]) -> np.ndarray | None:
+        """Joint angles for ``tool_pose`` on ``branch``, or ``None`` if unreachable (NumPy only).
+
+        ``branch`` is (shoulder, elbow, wrist) with each entry 0 or 1. The same derivation as
+        :meth:`inverse_batch`, kept dependency-free for the robot-side process.
+        지정 가지의 관절각, 도달 불가면 ``None``. torch 없이 동작한다.
+        """
+        p = self.p
+        sh, el, wr = branch
+        t06 = np.asarray(tool_pose, dtype=float) @ np.linalg.inv(self.tool_transform())
+        p06 = t06[:3, 3]
+        p05 = p06 - p.d6 * t06[:3, 2]
+        r05 = math.hypot(p05[0], p05[1])
+        if r05 <= abs(p.d4):
+            return None
+        phi = math.atan2(p05[1], p05[0])
+        psi = math.acos(max(-1.0, min(1.0, p.d4 / r05)))
+        th1 = phi + (psi if sh == 0 else -psi) + math.pi / 2
+        s1, c1 = math.sin(th1), math.cos(th1)
+        c5 = (p06[0] * s1 - p06[1] * c1 - p.d4) / p.d6
+        if abs(c5) > 1.0:
+            return None
+        th5 = math.acos(max(-1.0, min(1.0, c5)))
+        th5 = th5 if wr == 0 else -th5
+        s5 = math.sin(th5)
+        t60 = np.linalg.inv(t06)
+        if abs(s5) < 1e-6:
+            th6 = 0.0
+        else:
+            th6 = math.atan2((-t60[1, 0] * s1 + t60[1, 1] * c1) / s5, (t60[0, 0] * s1 - t60[0, 1] * c1) / s5)
+        t01 = _rot_z(th1) @ _trans(0, 0, p.d1) @ _rot_x(math.pi / 2)
+        t45 = _rot_z(th5) @ _trans(0, 0, p.d5) @ _rot_x(-math.pi / 2)
+        t56 = _rot_z(th6) @ _trans(0, 0, p.d6)
+        t14 = np.linalg.inv(t01) @ t06 @ np.linalg.inv(t45 @ t56)
+        p14 = t14[:3, 3]
+        r14 = math.hypot(p14[0], p14[1])
+        c3 = (r14 * r14 - p.a2 * p.a2 - p.a3 * p.a3) / (2 * p.a2 * p.a3)
+        if abs(c3) > 1.0:
+            return None
+        th3 = math.acos(max(-1.0, min(1.0, c3)))
+        th3 = th3 if el == 0 else -th3
+        th2 = math.atan2(p14[1], p14[0]) - math.atan2(p.a3 * math.sin(th3), p.a2 + p.a3 * math.cos(th3))
+        t34 = np.linalg.inv(_rot_z(th2) @ _trans(p.a2, 0, 0) @ _rot_z(th3) @ _trans(p.a3, 0, 0)) @ t14
+        th4 = math.atan2(t34[1, 0], t34[0, 0])
+        q = np.array([th1, th2, th3, th4, th5, th6])
+        q = (q + math.pi) % (2 * math.pi) - math.pi
+        for i in range(6):
+            if q[i] < self.limits[i, 0]:
+                q[i] += 2 * math.pi
+            if q[i] > self.limits[i, 1]:
+                q[i] -= 2 * math.pi
+        if np.any(q < self.limits[:, 0]) or np.any(q > self.limits[:, 1]):
+            return None
+        return q
+
+    def inverse_batch(self, tool_poses, branch: tuple[int, int, int]):
+        """Vectorised fixed-branch IK. / 벡터화 고정 가지 IK.
+
+        ``tool_poses`` is a ``(N, 4, 4)`` torch tensor of base -> tool poses. Returns
+        ``(q, valid)`` with ``q`` wrapped into the joint limits where possible.
+        """
+        import torch
+
+        p = self.p
+        sh, el, wr = branch
+        t = tool_poses
+        dev, dt = t.device, t.dtype
+        n = t.shape[0]
+
+        tool_inv = torch.as_tensor(np.linalg.inv(self.tool_transform()), device=dev, dtype=dt)
+        t06 = t @ tool_inv
+        p06 = t06[:, :3, 3]
+        p05 = p06 - p.d6 * t06[:, :3, 2]
+        r05 = torch.hypot(p05[:, 0], p05[:, 1])
+        valid = r05 > abs(p.d4)
+
+        phi = torch.atan2(p05[:, 1], p05[:, 0])
+        psi = torch.acos((p.d4 / r05.clamp(min=1e-9)).clamp(-1.0, 1.0))
+        th1 = phi + (psi if sh == 0 else -psi) + math.pi / 2
+        s1, c1 = torch.sin(th1), torch.cos(th1)
+
+        c5 = (p06[:, 0] * s1 - p06[:, 1] * c1 - p.d4) / p.d6
+        valid &= c5.abs() <= 1.0
+        th5 = torch.acos(c5.clamp(-1.0, 1.0))
+        th5 = th5 if wr == 0 else -th5
+        s5 = torch.sin(th5)
+        safe_s5 = torch.where(s5.abs() < 1e-6, torch.ones_like(s5), s5)
+        t60 = torch.linalg.inv(t06)
+        th6 = torch.atan2(
+            (-t60[:, 1, 0] * s1 + t60[:, 1, 1] * c1) / safe_s5,
+            (t60[:, 0, 0] * s1 - t60[:, 0, 1] * c1) / safe_s5,
+        )
+        th6 = torch.where(s5.abs() < 1e-6, torch.zeros_like(th6), th6)
+
+        def rot_z(a):
+            c, s = torch.cos(a), torch.sin(a)
+            m = torch.eye(4, device=dev, dtype=dt).repeat(a.shape[0], 1, 1)
+            m[:, 0, 0], m[:, 0, 1], m[:, 1, 0], m[:, 1, 1] = c, -s, s, c
+            return m
+
+        def const(m):
+            return torch.as_tensor(m, device=dev, dtype=dt).repeat(n, 1, 1)
+
+        t01 = rot_z(th1) @ const(_trans(0, 0, p.d1) @ _rot_x(math.pi / 2))
+        t45 = rot_z(th5) @ const(_trans(0, 0, p.d5) @ _rot_x(-math.pi / 2))
+        t56 = rot_z(th6) @ const(_trans(0, 0, p.d6))
+        t14 = torch.linalg.inv(t01) @ t06 @ torch.linalg.inv(t45 @ t56)
+        p14 = t14[:, :3, 3]
+        r14 = torch.hypot(p14[:, 0], p14[:, 1])
+
+        c3 = (r14 * r14 - p.a2 * p.a2 - p.a3 * p.a3) / (2 * p.a2 * p.a3)
+        valid &= c3.abs() <= 1.0
+        th3 = torch.acos(c3.clamp(-1.0, 1.0))
+        th3 = th3 if el == 0 else -th3
+        th2 = torch.atan2(p14[:, 1], p14[:, 0]) - torch.atan2(
+            p.a3 * torch.sin(th3), p.a2 + p.a3 * torch.cos(th3)
+        )
+        t34 = (
+            torch.linalg.inv(rot_z(th2) @ const(_trans(p.a2, 0, 0)) @ rot_z(th3) @ const(_trans(p.a3, 0, 0)))
+            @ t14
+        )
+        th4 = torch.atan2(t34[:, 1, 0], t34[:, 0, 0])
+
+        q = torch.stack([th1, th2, th3, th4, th5, th6], dim=1)
+        q = (q + math.pi) % (2 * math.pi) - math.pi
+        lim = torch.as_tensor(self.limits, device=dev, dtype=dt)
+        for i in range(6):
+            q[:, i] = torch.where(q[:, i] < lim[i, 0], q[:, i] + 2 * math.pi, q[:, i])
+            q[:, i] = torch.where(q[:, i] > lim[i, 1], q[:, i] - 2 * math.pi, q[:, i])
+        valid &= ((q >= lim[:, 0]) & (q <= lim[:, 1])).all(dim=1)
+        return q, valid
