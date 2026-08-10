@@ -92,3 +92,49 @@ def _mlp(n_in: int, hidden: tuple[int, ...], n_out: int) -> nn.Sequential:
     return nn.Sequential(*layers)
 
 
+class KeypointEncoder(nn.Module):
+    """Spatial soft-argmax encoder: K learned keypoints with sub-pixel image coordinates.
+
+    Precise manipulation needs *where* things are to a fraction of a pixel; a dense layer over a
+    flattened feature map is poor at that, the expected coordinate of a softmax heat map is good
+    at it. The keypoints (x, y and their peak strength) plus a pooled appearance vector feed the
+    heads. 공간 소프트-argmax: 학습된 K 개 키포인트의 부화소 좌표를 특징으로 쓴다.
+    """
+
+    def __init__(self, resolution: int, in_channels: int, features: int, keypoints: int):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels + 2, 32, 5, stride=2, padding=2),
+            nn.ELU(),
+            nn.Conv2d(32, 64, 3, stride=1, padding=1),
+            nn.ELU(),
+            nn.Conv2d(64, 64, 3, stride=2, padding=1),
+            nn.ELU(),
+            nn.Conv2d(64, 64, 3, stride=1, padding=1),
+            nn.ELU(),
+        )
+        self.heat = nn.Conv2d(64, keypoints, 1)
+        self.log_temperature = nn.Parameter(torch.zeros(1))
+        side = math.ceil(resolution / 4)
+        ys, xs = torch.meshgrid(
+            torch.linspace(-1.0, 1.0, side), torch.linspace(-1.0, 1.0, side), indexing="ij"
+        )
+        self.register_buffer("xs", xs.reshape(1, 1, -1))
+        self.register_buffer("ys", ys.reshape(1, 1, -1))
+        gy, gx = torch.meshgrid(
+            torch.linspace(-1.0, 1.0, resolution), torch.linspace(-1.0, 1.0, resolution), indexing="ij"
+        )
+        self.register_buffer("grid", torch.stack([gx, gy], dim=0).unsqueeze(0))
+        self.fc = nn.Sequential(nn.Linear(3 * keypoints + 64, features), nn.ELU())
+
+    def forward(self, x: Tensor) -> Tensor:
+        h = self.conv(torch.cat([x, self.grid.expand(x.shape[0], -1, -1, -1)], dim=1))
+        logits = self.heat(h).flatten(2) / self.log_temperature.exp()
+        p = torch.softmax(logits, dim=-1)
+        kx = (p * self.xs).sum(-1)
+        ky = (p * self.ys).sum(-1)
+        strength = logits.amax(-1).tanh()
+        pooled = h.mean(dim=(2, 3))
+        return self.fc(torch.cat([kx, ky, strength, pooled], dim=1))
+
+
