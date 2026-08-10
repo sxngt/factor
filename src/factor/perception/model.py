@@ -138,3 +138,83 @@ class KeypointEncoder(nn.Module):
         return self.fc(torch.cat([kx, ky, strength, pooled], dim=1))
 
 
+class StateEstimator(nn.Module):
+    """Pose-correction and interaction-state estimator. / 포즈 보정·상호작용 상태 추정기.
+
+    Inputs
+    ------
+    rgb
+        ``(N, 3, H, W)`` canonical view in 0..1.
+    render
+        ``(N, C, H, W)`` kinematic render channels in 0..1, or ``None`` when the model was
+        configured without them.
+    """
+
+    def __init__(self, config: EstimatorConfig):
+        super().__init__()
+        self.config = config
+        channels = config.in_channels + config.render_channels
+        if config.encoder == "keypoints":
+            self.encoder = KeypointEncoder(config.resolution, channels, config.features, config.keypoints)
+        else:
+            self.encoder = CoordConvEncoder(config.resolution, channels, config.features)
+        self.dropout = nn.Dropout(config.dropout)
+        # Proprioception: where the robot *believes* its grip point is (anchor frame). The image
+        # shows where it really is relative to the tower; the belief error is their difference,
+        # so neither the camera pose nor any calibration is needed.
+        # 고유수용 입력: 로봇이 믿는 그립점. 영상이 보여주는 실제 위치와의 차이가 믿음의 오차다.
+        width = config.features
+        if config.proprio_dim:
+            self.proprio = nn.Sequential(
+                nn.Linear(config.proprio_dim, 64), nn.ELU(), nn.Linear(64, 64), nn.ELU()
+            )
+            width += 64
+        self.residual_head = _mlp(width, config.hidden, config.n_residual)
+        self.logvar_head = _mlp(width, config.hidden, config.n_residual)
+        self.state_head = _mlp(config.features, config.hidden, config.n_states)
+        self.offset_head = _mlp(config.features, config.hidden, config.n_offset)
+
+    @staticmethod
+    def standardise(x: Tensor) -> Tensor:
+        """Per-sample, per-channel standardisation. / 샘플·채널별 표준화."""
+        mean = x.mean(dim=(2, 3), keepdim=True)
+        std = x.std(dim=(2, 3), keepdim=True)
+        return (x - mean) / (std + 0.05)
+
+    def forward(
+        self, rgb: Tensor, render: Tensor | None = None, proprio: Tensor | None = None
+    ) -> dict[str, Tensor]:
+        x = self.standardise(rgb)
+        if render is not None:
+            x = torch.cat([x, render], dim=1)
+        features = self.dropout(self.encoder(x))
+        fused = features
+        if self.config.proprio_dim:
+            if proprio is None:
+                raise ValueError("this estimator needs the believed grip point (proprio)")
+            fused = torch.cat(
+                [features, self.proprio(proprio[:, : self.config.proprio_dim] / self.config.proprio_scale)], 1
+            )
+        return {
+            "residual": self.residual_head(fused),
+            "logvar": self.logvar_head(fused),
+            "state_logits": self.state_head(features),
+            "offset": self.offset_head(features),
+        }
+
+
+def estimator_loss(
+    output: dict[str, Tensor], residual: Tensor, state: Tensor | None = None, offset: Tensor | None = None
+) -> Tensor:
+    """Heteroscedastic regression loss plus optional state cross-entropy.
+
+    이분산 회귀 손실(불확실도 학습) + 상호작용 상태 교차 엔트로피(라벨이 있을 때).
+    """
+    logvar = output["logvar"].clamp(-6.0, 4.0)
+    nll = 0.5 * (torch.exp(-logvar) * (output["residual"] - residual) ** 2 + logvar)
+    loss = nll.mean()
+    if state is not None:
+        loss = loss + nn.functional.cross_entropy(output["state_logits"], state)
+    if offset is not None:
+        loss = loss + ((output["offset"] - offset) ** 2).mean()
+    return loss
