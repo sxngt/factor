@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FAIRINO FR3 (fairino3_v6 links and meshes from FAIRINO frcobot_ros2 / fairino_description) with joint origins from the controller-fitted DH parameters, soft limits and a flange link, plus a simplified DH-Robotics AG-95 (body mesh from dh_robotics_ag95_description, two prismatic fingers whose joint value is the half gap). Meshes are referenced as package:// URIs and are not distributed here; see docs/ASSETS.md. -->
+<robot name="fr3_ag95">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.00049027 -0.00045095 0.032527" rpy="0 0 0" />
+      <mass value="0.78393" />
+      <inertia ixx="0.0013854" ixy="1.1455E-05" ixz="-1.0642E-05" iyy="0.0013849" iyz="-9.7435E-06" izz="0.001977" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/base_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="shoulder_link">
+    <inertial>
+      <origin xyz="-0.00005 -0.01592 0.00226" rpy="0 0 0" />
+      <mass value="2.24" />
+      <inertia ixx="0.00303904" ixy="-0.00000346" ixz="-0.00001029" iyy="0.00223536" iyz="0.00008620" izz="0.00296223" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/shoulder_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/shoulder_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j1" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="shoulder_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.054326" upper="3.054326" effort="150" velocity="3.15" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="upperarm_link">
+    <inertial>
+      <origin xyz="0.13939 0.0 0.09954" rpy="0 0 0" />
+      <mass value="4.94" />
+      <inertia ixx="0.0068126" ixy="0.00000606" ixz="-0.00003661" iyy="0.09321437" iyz="0.00000024" izz="0.09150689" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/upperarm_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/upperarm_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j2" type="revolute">
+    <origin xyz="0.000000 0.000000 0.140000" rpy="1.570796327 0.000000000 0.000000000" />
+    <parent link="shoulder_link" />
+    <child link="upperarm_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-4.625123" upper="1.483530" effort="150" velocity="3.15" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="forearm_link">
+    <inertial>
+      <origin xyz="0.05899 0.00008 0.01299" rpy="0 0 0" />
+      <mass value="2.29" />
+      <inertia ixx="0.00263873" ixy="0.00002077" ixz="-0.00014132" iyy="0.02074603" iyz="-0.00000186" izz="0.02039086" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/forearm_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/forearm_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j3" type="revolute">
+    <origin xyz="-0.280491 0.000000 0.000000" rpy="0.000000000 0.000000000 0.000000000" />
+    <parent link="upperarm_link" />
+    <child link="forearm_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.617994" upper="2.617994" effort="150" velocity="3.15" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="wrist1_link">
+    <inertial>
+      <origin xyz="0.00005 -0.00233 0.01467" rpy="0 0 0" />
+      <mass value="1.56" />
+      <inertia ixx="0.00162646" ixy="-0.00000285" ixz="-0.00000348" iyy="0.00158068" iyz="0.00006122" izz="0.00125531" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/wrist1_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/wrist1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j4" type="revolute">
+    <origin xyz="-0.239929 0.000000 0.000000" rpy="0.000000000 0.000000000 0.000000000" />
+    <parent link="forearm_link" />
+    <child link="wrist1_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-4.625123" upper="1.483530" effort="28" velocity="3.2" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="wrist2_link">
+    <inertial>
+      <origin xyz="-0.00005 0.00233 0.01467" rpy="0 0 0" />
+      <mass value="1.56" />
+      <inertia ixx="0.00162646" ixy="-0.00000285" ixz="0.00000348" iyy="0.00158068" iyz="-0.00006122" izz="0.00125531" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/wrist2_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/wrist2_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j5" type="revolute">
+    <origin xyz="0.000000 0.000000 0.102452" rpy="1.570796327 0.000000000 0.000000000" />
+    <parent link="wrist1_link" />
+    <child link="wrist2_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.054326" upper="3.054326" effort="28" velocity="3.2" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="wrist3_link">
+    <inertial>
+      <origin xyz="-0.00055 -0.00111 -0.02005" rpy="0 0 0" />
+      <mass value="0.36" />
+      <inertia ixx="0.00023024" ixy="0.00000023" ixz="-0.00000058" iyy="0.00023033" iyz="-0.00000116" izz="0.00035930" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/wrist3_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://fairino_description/meshes/fairino3_v6/wrist3_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j6" type="revolute">
+    <origin xyz="0.000000 0.000000 0.102123" rpy="-1.570796327 0.000000000 0.000000000" />
+    <parent link="wrist2_link" />
+    <child link="wrist3_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.054326" upper="3.054326" effort="28" velocity="3.2" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <joint name="flange_joint" type="fixed">
+    <origin xyz="0 0 0.101000" rpy="0 0 0" />
+    <parent link="wrist3_link" />
+    <child link="flange" />
+  </joint>
+  <link name="flange">
+    <inertial>
+      <mass value="0.01" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+    </inertial>
+    <visual>
+      <geometry>
+        <sphere radius="0.002" />
+      </geometry>
+    </visual>
+  </link>
+
+  <!-- ===== DH AG-95, simplified: body mesh + two prismatic fingers; mounted on the flange, gripper z = approach axis, fingers open along x / 단순화 AG-95: 몸통 메시 + 프리즘 핑거 2개 ===== -->
+  <joint name="ag95_mount_joint" type="fixed">
+    <origin rpy="0 0 0.0000000" xyz="0 0 0.005"/>
+    <parent link="flange"/>
+    <child link="ag95_body"/>
+  </joint>
+  <link name="ag95_body">
+    <visual><geometry><mesh filename="package://dh_robotics_ag95_description/meshes/visual/base_link.STL" scale="0.001 0.001 0.001"/></geometry><material name="ag95"><color rgba="0.2 0.2 0.22 1"/></material></visual>
+    <collision><origin xyz="0 0 0.0675"/><geometry><box size="0.093 0.067 0.135"/></geometry></collision>
+    <inertial><origin xyz="0 0 0.0675"/><mass value="1.0"/><inertia ixx="1.89e-3" ixy="0" ixz="0" iyy="2.24e-3" iyz="0" izz="1.10e-3"/></inertial>
+  </link>
+  <joint name="ag95_left_finger_joint" type="prismatic">
+    <origin rpy="0 0 0.0000000" xyz="0 0 0"/>
+    <parent link="ag95_body"/>
+    <child link="ag95_left_finger"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="130" lower="0" upper="0.0475" velocity="0.15"/>
+  </joint>
+  <link name="ag95_left_finger">
+    <visual><origin xyz="0.0040 0 0.1795"/><geometry><box size="0.008 0.029 0.04"/></geometry><material name="pad"><color rgba="0.1 0.1 0.1 1"/></material></visual>
+    <collision><origin xyz="0.0040 0 0.1795"/><geometry><box size="0.008 0.029 0.04"/></geometry></collision>
+    <visual><origin xyz="0.0040 0 0.1471"/><geometry><box size="0.008 0.020 0.0248"/></geometry><material name="stem"><color rgba="0.25 0.25 0.27 1"/></material></visual>
+    <collision><origin xyz="0.0040 0 0.1471"/><geometry><box size="0.008 0.020 0.0248"/></geometry></collision>
+    <inertial><origin xyz="0.0040 0 0.1795"/><mass value="0.05"/><inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/></inertial>
+  </link>
+  <joint name="ag95_right_finger_joint" type="prismatic">
+    <origin rpy="0 0 3.1415927" xyz="0 0 0"/>
+    <parent link="ag95_body"/>
+    <child link="ag95_right_finger"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="130" lower="0" upper="0.0475" velocity="0.15"/>
+    <mimic joint="ag95_left_finger_joint" multiplier="1" offset="0"/>
+  </joint>
+  <link name="ag95_right_finger">
+    <visual><origin xyz="0.0040 0 0.1795"/><geometry><box size="0.008 0.029 0.04"/></geometry><material name="pad"><color rgba="0.1 0.1 0.1 1"/></material></visual>
+    <collision><origin xyz="0.0040 0 0.1795"/><geometry><box size="0.008 0.029 0.04"/></geometry></collision>
+    <visual><origin xyz="0.0040 0 0.1471"/><geometry><box size="0.008 0.020 0.0248"/></geometry><material name="stem"><color rgba="0.25 0.25 0.27 1"/></material></visual>
+    <collision><origin xyz="0.0040 0 0.1471"/><geometry><box size="0.008 0.020 0.0248"/></geometry></collision>
+    <inertial><origin xyz="0.0040 0 0.1795"/><mass value="0.05"/><inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/></inertial>
+  </link>
+  <joint name="tcp_joint" type="fixed">
+    <origin rpy="-1.5707963 0 0.0000000" xyz="0 0 0.2045"/>
+    <parent link="flange"/>
+    <child link="tcp"/>
+  </joint>
+  <link name="tcp">
+    <inertial><mass value="0.001"/><inertia ixx="1e-7" ixy="0" ixz="0" iyy="1e-7" iyz="0" izz="1e-7"/></inertial>
+    <visual><geometry><sphere radius="0.002"/></geometry><material name="tcp"><color rgba="1 0 0 1"/></material></visual>
+  </link>
+  <!-- No camera link: the camera is fixed in the scene, not on the arm. / 카메라는 팔이 아닌 장면에 고정. -->
+</robot>
