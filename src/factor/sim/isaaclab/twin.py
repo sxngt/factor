@@ -104,3 +104,55 @@ class TwinSettings:
     table_height: float = 0.75
 
 
+def settings_from_scene(scene, assets_root: str, **overrides) -> TwinSettings:
+    """Build :class:`TwinSettings` from a scene specification. / 장면 명세 → 트윈 설정.
+
+    Asset paths in ``extras.sim`` are resolved against ``assets_root`` unless absolute.
+    ``overrides`` replace individual fields (resolution, randomisation, ...).
+    """
+    sim = scene.extras["sim"]
+    hanoi = scene.extras["hanoi"]
+    grasp = scene.robot.grasp
+
+    def path(p: str) -> str:
+        return p if os.path.isabs(p) else os.path.join(assets_root, p)
+
+    anchor = scene.anchor_in_base
+    fields = dict(
+        robot_usd=path(sim["robot_usd"]),
+        ring_usds=tuple(path(p) for p in sim["ring_usds"]),
+        mat_usd=path(sim["mat_usd"]) if sim.get("mat_usd") else None,
+        layout=HanoiLayout.from_scene(scene),
+        kinematics=FR3Params.from_mapping(scene.robot.kinematics),
+        ik_branch=tuple(int(v) for v in grasp.get("ik_branch", (0, 0, 1))),
+        finger_axis=str(grasp.get("finger_axis", "y")),
+        finger_sign=int(grasp.get("finger_sign", 1)),
+        finger_max=float(grasp.get("finger_max", 0.0475)),
+        finger_clearance=float(grasp.get("finger_clearance", 0.001)),
+        open_margin=float(grasp.get("open_margin", 0.006)),
+        grasp_tip_above_bottom=float(grasp.get("tip_above_bottom", 0.002)),
+        base_z=float(hanoi.get("base_z", -0.026)),
+        anchor_xy=(float(anchor[0, 3]), float(anchor[1, 3])),
+        anchor_yaw=float(math.atan2(anchor[1, 0], anchor[0, 0])),
+        camera_in_anchor=tuple(float(v) for v in scene.camera_in_anchor[:3, 3]),
+    )
+    fields.update(overrides)
+    return TwinSettings(**fields)
+
+
+def _camera_cfg(resolution: int, hfov: float, mask: bool) -> TiledCameraCfg:
+    focal = APERTURE_MM / (2.0 * math.tan(hfov / 2.0))
+    data_types = ["rgb", "semantic_segmentation"] if mask else ["rgb"]
+    return TiledCameraCfg(
+        prim_path="/World/envs/env_.*/AnchorCam",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 1.0), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
+        data_types=data_types,
+        width=resolution,
+        height=resolution,
+        colorize_semantic_segmentation=False,
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=focal, horizontal_aperture=APERTURE_MM, clipping_range=(0.05, 5.0)
+        ),
+    )
+
+
