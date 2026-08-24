@@ -156,3 +156,105 @@ def _camera_cfg(resolution: int, hfov: float, mask: bool) -> TiledCameraCfg:
     )
 
 
+def make_env_cfg(s: TwinSettings, num_envs: int, device: str) -> HanoiTwinCfg:
+    """Build the Isaac Lab configuration from settings. / 설정 → Isaac Lab cfg."""
+    kin = FR3Kinematics(s.kinematics)
+    lay = s.layout
+    grip_offset = lay.rings[0].height / 2.0 - s.grasp_tip_above_bottom
+
+    def in_base(p_anchor) -> np.ndarray:
+        """Anchor-frame point -> nominal base frame. / 앵커 프레임 점 → 공칭 베이스 프레임."""
+        c, s_ = math.cos(s.anchor_yaw), math.sin(s.anchor_yaw)
+        x, y, z = p_anchor
+        return np.array([s.anchor_xy[0] + c * x - s_ * y, s.anchor_xy[1] + s_ * x + c * y, z])
+
+    hover_tip = in_base([*lay.peg_xy("left"), lay.hover_height - grip_offset])
+    pose = np.eye(4)
+    pose[:3, :3] = top_down_rotation(s.finger_axis, s.finger_sign, yaw=s.anchor_yaw)
+    pose[:3, 3] = hover_tip
+    home = kin.inverse(pose, s.ik_branch)
+    if home is None:
+        raise ValueError("hover pose unreachable; check anchor_xy and the IK branch")
+    open_gap = min(lay.rings[-1].radius + s.open_margin, s.finger_max)
+
+    cfg = HanoiTwinCfg()
+    cfg.settings = s
+    cfg.scene.num_envs = num_envs
+    cfg.sim.device = device
+    cfg.episode_length_s = s.episode_seconds
+    cfg.robot = ArticulationCfg(
+        prim_path="/World/envs/env_.*/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=s.robot_usd, activate_contact_sensors=False, semantic_tags=[("class", "robot")]
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            joint_pos={
+                **{n: float(v) for n, v in zip(ARM_JOINTS, home, strict=True)},
+                **{n: open_gap for n in FINGER_JOINTS},
+            }
+        ),
+        actuators={
+            "arm": ImplicitActuatorCfg(
+                joint_names_expr=list(ARM_JOINTS), stiffness=4.0e5, damping=2.0e4, effort_limit_sim=3000.0
+            ),
+            "fingers": ImplicitActuatorCfg(
+                joint_names_expr=["ag95_.*_finger_joint"],
+                stiffness=1.0e4,
+                damping=200.0,
+                effort_limit_sim=130.0,
+            ),
+        },
+    )
+    cfg.rings = [
+        RigidObjectCfg(
+            prim_path=f"/World/envs/env_.*/Ring{i}",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=usd,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(max_depenetration_velocity=1.0),
+                mass_props=sim_utils.MassPropertiesCfg(mass=s.disk_mass),
+                semantic_tags=[("class", "ring")],
+            ),
+            init_state=RigidObjectCfg.InitialStateCfg(
+                pos=tuple(
+                    in_base([*lay.peg_xy("left"), lay.plate_thickness + lay.rings[0].height * (i + 0.5)])
+                )
+            ),
+        )
+        for i, usd in enumerate(s.ring_usds)
+    ]
+    hfov = 2.0 * math.atan(s.view_width / (2.0 * float(np.linalg.norm(s.camera_in_anchor))))
+    cfg.camera = _camera_cfg(s.resolution, hfov, s.render_mask or s.robot_recolor > 0)
+    cfg.observation_space = {
+        "rgb": [3, s.resolution, s.resolution],
+        "render": [int(s.render_belief) + int(s.render_mask), s.resolution, s.resolution],
+    }
+    return cfg
+
+
+@configclass
+class HanoiTwinCfg(DirectRLEnvCfg):
+    decimation = 4
+    episode_length_s = 8.0
+    action_space = 6
+    observation_space = {"rgb": [3, 128, 128], "render": [1, 128, 128]}
+    state_space = 0
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 120,
+        render_interval=4,
+        physx=PhysxCfg(gpu_max_rigid_patch_count=2**20, gpu_max_rigid_contact_count=2**24),
+    )
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=64, env_spacing=2.5, replicate_physics=True)
+    robot: ArticulationCfg = None
+    rings: list = []
+    camera: TiledCameraCfg = None
+    settings: TwinSettings = None
+    max_step: float = 0.01
+    attach_xy: float = 0.006
+    attach_z: tuple = (-0.005, 0.006)
+    release_xy: float = 0.003
+    seated_xy: float = 0.002
+    seated_tilt: float = math.radians(5.0)
+    offset_scale: float = 0.1  # metres per unit of the ring-to-grip offset label / 링-그립 오프셋 라벨 스케일
+    retry_hold_steps: int = 5  # steps to wait at hover before descending again / 재시도 전 hover 대기 스텝
+
+
