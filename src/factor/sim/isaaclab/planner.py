@@ -82,3 +82,90 @@ def funnel_step(
     return step, close
 
 
+class NudgeState:
+    """Per-environment stall detector and search index. / env 별 정체 감지·탐색 인덱스."""
+
+    def __init__(
+        self, num_envs: int, device, amplitude: float = 0.0007, stall_steps: int = 3, progress: float = 0.0005
+    ):
+        self.amplitude = amplitude
+        self.stall_steps = stall_steps
+        self.progress = progress
+        self.stall = torch.zeros(num_envs, dtype=torch.long, device=device)
+        self.index = torch.zeros(num_envs, dtype=torch.long, device=device)
+        self.prev_height = torch.zeros(num_envs, device=device)
+        self.retry = torch.zeros(num_envs, dtype=torch.bool, device=device)
+        self.table = torch.tensor(NUDGE_PATTERN, dtype=torch.float32, device=device) * amplitude
+
+    def reset(self, env_ids) -> None:
+        self.stall[env_ids] = 0
+        self.index[env_ids] = 0
+        self.retry[env_ids] = False
+
+    def update(
+        self, grip_height: torch.Tensor, inserting: torch.Tensor, holding: torch.Tensor
+    ) -> torch.Tensor:
+        """Advance and return the ``(N, 2)`` lateral offsets. / 갱신 후 옆 오프셋 반환.
+
+        The search index persists while the object is held and resets once it is released. When
+        the whole pattern has been tried, ``retry`` is raised: the caller lifts the object above
+        the latch height so the correction can refresh, then descends again.
+        """
+        moved = (self.prev_height - grip_height) >= self.progress
+        self.stall = torch.where(inserting & ~moved, self.stall + 1, torch.zeros_like(self.stall))
+        advance = self.stall >= self.stall_steps
+        exhausted = advance & (self.index == len(NUDGE_PATTERN) - 1)
+        self.retry |= exhausted
+        self.index = torch.where(advance, (self.index + 1) % len(NUDGE_PATTERN), self.index)
+        self.stall[advance] = 0
+        self.index = torch.where(holding, self.index, torch.zeros_like(self.index))
+        self.retry &= holding
+        self.prev_height = grip_height.clone()
+        return self.table[self.index]
+
+
+class FusionState:
+    """Batched EMA with reset flags and a height latch. / 배치 EMA + 초기화 플래그 + 높이 latch."""
+
+    def __init__(
+        self, num_envs: int, dim: int, device, alpha: float, latch_below: float, hover_height: float
+    ):
+        self.alpha = alpha
+        self.latch_below = latch_below
+        self.hover_height = hover_height
+        self.value = torch.zeros(num_envs, dim, device=device)
+        self.fresh = torch.ones(num_envs, dtype=torch.bool, device=device)
+
+    def reset(self, env_ids) -> None:
+        self.fresh[env_ids] = True
+
+    def update(self, correction: torch.Tensor, grip_height: torch.Tensor) -> torch.Tensor:
+        high = grip_height > self.hover_height - self.latch_below
+        smoothed = self.alpha * self.value + (1.0 - self.alpha) * correction
+        self.value = torch.where(
+            self.fresh.unsqueeze(1), correction, torch.where(high.unsqueeze(1), smoothed, self.value)
+        )
+        self.fresh[:] = False
+        return self.value
+
+
+def apply_correction(
+    points: torch.Tensor, correction: torch.Tensor, pos_scale: float, yaw_scale: float
+) -> torch.Tensor:
+    """Rigid 2-D correction about the frame origin. / 원점 기준 강체 2D 보정.
+
+    ``correction`` is ``(N, 3)`` in normalised units; ``points`` is ``(N, 3)`` in the frame whose
+    origin the correction rotates about.
+    """
+    c = correction[:, :2] * pos_scale
+    th = correction[:, 2] * yaw_scale
+    dz = correction[:, 3] * pos_scale if correction.shape[1] > 3 else torch.zeros_like(th)
+    cs, sn = torch.cos(th), torch.sin(th)
+    return torch.stack(
+        [
+            cs * points[:, 0] - sn * points[:, 1] + c[:, 0],
+            sn * points[:, 0] + cs * points[:, 1] + c[:, 1],
+            points[:, 2] + dz,
+        ],
+        1,
+    )
