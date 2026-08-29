@@ -192,3 +192,108 @@ def collect(
     return counts
 
 
+def fit(
+    model: StateEstimator,
+    buffer: FrameBuffer,
+    epochs: int,
+    batch: int,
+    lr: float,
+    weight_decay: float,
+    val_every: int,
+    device,
+    log,
+) -> float:
+    """Train on the buffer with an environment-wise validation split. / env 단위 검증 분할로 학습.
+
+    Returns the best validation residual MSE; the model is left at the best epoch.
+    """
+    size = buffer.size
+    all_idx = torch.arange(size)
+    is_val = (all_idx % buffer.num_envs) % val_every == 0
+    train_idx, val_idx = all_idx[~is_val], all_idx[is_val]
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    best, best_state = float("inf"), None
+    t0 = time.time()
+    for ep in range(epochs):
+        model.train()
+        total, n_batches = 0.0, 0
+        perm = train_idx[torch.randperm(len(train_idx))]
+        for rgb, ren, res, st, off, grip in buffer.batches(perm, batch, device):
+            out = model(rgb, ren, grip)
+            loss = estimator_loss(out, res, st, off)
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            total += float(loss)
+            n_batches += 1
+        sched.step()
+        if ep % 5 == 4 or ep == epochs - 1:
+            model.eval()
+            se = torch.zeros(model.config.n_residual, device=device)
+            correct = 0
+            off_se = torch.zeros(2, device=device)
+            off_n = torch.zeros(2, device=device)
+            near_se = torch.zeros(model.config.n_residual, device=device)
+            near_n = 0
+            with torch.no_grad():
+                for rgb, ren, res, st, off, grip in buffer.batches(val_idx, batch, device):
+                    out = model(rgb, ren, grip)
+                    se += ((out["residual"] - res) ** 2).sum(0)
+                    # Frames that matter: grip point low and over a peg (where the correction latches).
+                    # 중요한 프레임: 그립점이 낮고 기둥 위에 있을 때 (보정이 고정되는 구간).
+                    spacing = 0.06
+                    dx = (grip[:, 0] - torch.round(grip[:, 0] / spacing) * spacing).abs()
+                    near = (dx < 0.015) & (grip[:, 1].abs() < 0.015) & (grip[:, 2] < 0.09)
+                    near_se += ((out["residual"] - res) ** 2 * near[:, None]).sum(0)
+                    near_n += int(near.sum())
+                    correct += int((out["state_logits"].argmax(1) == st).sum())
+                    held = (st == 2).float()
+                    err2 = ((out["offset"] - off) ** 2).sum(1)
+                    off_se += torch.stack([(err2 * (1 - held)).sum(), (err2 * held).sum()])
+                    off_n += torch.stack([(1 - held).sum(), held.sum()])
+            per_dim = (se / max(len(val_idx), 1)).tolist()
+            near_dim = (near_se / max(near_n, 1) * 100.0).sqrt().tolist()  # RMS in mm (pos_scale 1 cm)
+            val = float(sum(per_dim) / len(per_dim))
+            acc = correct / max(len(val_idx), 1)
+            if val < best:
+                best = val
+                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            off_mm = (torch.sqrt(off_se / off_n.clamp(min=1)) * model.config.offset_scale * 1000.0).tolist()
+            log(
+                f"epoch {ep:3d}  train {total / max(n_batches, 1):.4f}  val residual mse {val:.4f} "
+                f"per-dim {[round(v, 4) for v in per_dim]}  state acc {acc:.3f}  "
+                f"ring offset rms mm free {off_mm[0]:.1f} held {off_mm[1]:.1f}  "
+                f"near-peg rms mm {[round(v, 2) for v in near_dim]} (n {near_n})  ({time.time() - t0:.0f}s)"
+            )
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model.eval()
+    return best
+
+
+def evaluate(env, model: StateEstimator, steps: int) -> dict:
+    """Deterministic student rollout with belief resampling off. / 학생 단독 평가."""
+    env.resample_belief = False
+    env.reset()
+    counts = {"succeeded": 0, "dropped": 0, "bad_release": 0, "timeout": 0}
+    frames = env.last_frames
+    model.eval()
+    for _ in range(steps):
+        with torch.no_grad():
+            est = student_action(model, frames)
+        _, _, terminated, truncated, _ = env.step(est)
+        frames = env.last_frames
+        reason = env.last_term_reason
+        seen = torch.zeros_like(terminated, dtype=torch.bool)
+        for key in ("succeeded", "dropped", "bad_release"):
+            m = reason[key] & ~seen
+            counts[key] += int(m.sum())
+            seen |= reason[key]
+        counts["timeout"] += int((truncated & ~seen).sum())
+    env.resample_belief = True
+    env.reset()
+    return counts
+
+
