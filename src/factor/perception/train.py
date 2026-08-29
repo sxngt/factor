@@ -297,3 +297,173 @@ def evaluate(env, model: StateEstimator, steps: int) -> dict:
     return counts
 
 
+def main() -> None:
+    from isaaclab.app import AppLauncher
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scene", default="configs/hanoi.yaml")
+    ap.add_argument(
+        "--assets", required=True, help="root that relative asset paths in the scene resolve against"
+    )
+    ap.add_argument("--num_envs", type=int, default=96)
+    ap.add_argument("--steps", type=int, default=1000)
+    ap.add_argument("--dagger_rounds", type=int, default=1)
+    ap.add_argument("--dagger_steps", type=int, default=400)
+    ap.add_argument("--epochs", type=int, default=60)
+    ap.add_argument("--dagger_epochs", type=int, default=30)
+    ap.add_argument("--batch", type=int, default=512)
+    ap.add_argument("--lr", type=float, default=5e-4)
+    ap.add_argument("--weight_decay", type=float, default=1e-4)
+    ap.add_argument("--noise", type=float, default=0.1)
+    ap.add_argument("--resolution", type=int, default=128)
+    ap.add_argument("--view_width", type=float, default=0.14, help="metres across the canonical view")
+    ap.add_argument("--anchor_err", type=float, default=0.008)
+    ap.add_argument("--anchor_yaw_deg", type=float, default=1.0)
+    ap.add_argument("--camera_rand", type=float, default=0.08)
+    ap.add_argument(
+        "--render", choices=("belief", "mask", "both", "none"), default="belief", help="render channels"
+    )
+    ap.add_argument("--no_mask", action="store_true")
+    ap.add_argument("--latch_below", type=float, default=0.012, help="0 disables the height latch (ablation)")
+    ap.add_argument("--nudge", type=float, default=0.0007, help="0 disables the contact search (ablation)")
+    ap.add_argument("--fusion_alpha", type=float, default=0.9)
+    ap.add_argument(
+        "--holding_from_estimate", action="store_true", help="regrasp when the state head says not held"
+    )
+    ap.add_argument("--in_hand_offset", type=float, default=0.003, help="held-start ring offset range (m)")
+    ap.add_argument("--offset_scale", type=float, default=0.02, help="metres per unit of the offset head")
+    ap.add_argument(
+        "--use_offset_estimate", action="store_true", help="place at goal minus the estimated in-hand offset"
+    )
+    ap.add_argument("--eval_steps", type=int, default=300)
+    ap.add_argument("--no_proprio", action="store_true", help="image-only estimator (ablation)")
+    ap.add_argument("--encoder", choices=("coordconv", "keypoints"), default="coordconv")
+    ap.add_argument(
+        "--anchor_z", type=float, default=0.0, help="height belief error range (m); >0 adds a z output"
+    )
+    ap.add_argument(
+        "--belief_fingers", action="store_true", help="draw both believed fingers in the belief channel"
+    )
+    ap.add_argument(
+        "--robot_recolor", type=float, default=0.0, help="probability of recolouring robot pixels"
+    )
+    ap.add_argument("--appearance", type=float, default=1.0, help="scale of all appearance randomisation")
+    ap.add_argument("--local_correction", action="store_true", help="label = translation at the active peg")
+    ap.add_argument("--init", default="", help="warm-start from a checkpoint (same architecture)")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--figures", default="", help="directory for canonical-view grids (paper material)")
+    ap.add_argument("--seed", type=int, default=0)
+    AppLauncher.add_app_launcher_args(ap)
+    args = ap.parse_args()
+    args.enable_cameras = True
+    app = AppLauncher(args).app
+
+    from factor.scene import load_scene
+    from factor.sim.contract import Randomisation
+    from factor.sim.isaaclab.twin import HanoiTwin, make_env_cfg, settings_from_scene
+
+    torch.manual_seed(args.seed)
+    settings = settings_from_scene(
+        load_scene(args.scene),
+        args.assets,
+        randomisation=Randomisation(
+            anchor_xy=args.anchor_err,
+            anchor_yaw=np.radians(args.anchor_yaw_deg),
+            anchor_z=args.anchor_z,
+            camera_xyz=args.camera_rand,
+            gain=0.4 * args.appearance,
+            bias=0.08 * args.appearance,
+            noise=0.05 * args.appearance,
+            blur=min(0.3 * args.appearance, 0.9),
+        ),
+        resolution=args.resolution,
+        view_width=args.view_width,
+        local_correction=args.local_correction,
+        belief_fingers=args.belief_fingers,
+        robot_recolor=args.robot_recolor,
+        render_mask=(args.render in ("mask", "both")) and not args.no_mask,
+        render_belief=(args.render in ("belief", "both")) and not args.no_mask,
+        latch_below=args.latch_below,
+        nudge_amplitude=args.nudge,
+        fusion_alpha=args.fusion_alpha,
+        holding_from_estimate=args.holding_from_estimate,
+        in_hand_offset=args.in_hand_offset,
+        use_offset_estimate=args.use_offset_estimate,
+    )
+    env_cfg = make_env_cfg(settings, args.num_envs, args.device)
+    env_cfg.offset_scale = args.offset_scale
+    env = HanoiTwin(env_cfg)
+    env.reset()
+    device = env.device
+    render_channels = 0 if args.no_mask else {"belief": 1, "mask": 1, "both": 2, "none": 0}[args.render]
+    model = StateEstimator(
+        EstimatorConfig(
+            resolution=args.resolution,
+            view_width=args.view_width,
+            render_channels=render_channels,
+            offset_scale=args.offset_scale,
+            render_mode="none" if args.no_mask else args.render,
+            proprio_dim=0 if args.no_proprio else 3,
+            encoder=args.encoder,
+            label="local" if args.local_correction else "global",
+            belief_fingers=args.belief_fingers,
+            n_residual=4 if args.anchor_z > 0 else 3,
+            pos_scale=settings.pos_scale,
+            yaw_scale=settings.yaw_scale,
+        )
+    ).to(device)
+    if args.init:
+        ck = torch.load(args.init, map_location=device, weights_only=False)
+        missing, unexpected = model.load_state_dict(ck["state_dict"], strict=False)
+        print(
+            f"[train] warm start from {args.init} (missing {len(missing)}, unexpected {len(unexpected)})",
+            flush=True,
+        )
+    total_steps = args.steps + args.dagger_rounds * args.dagger_steps
+    buffer = FrameBuffer(
+        total_steps, args.num_envs, args.resolution, render_channels, n_residual=model.config.n_residual
+    )
+    log = lambda msg: print(f"[train] {msg}", flush=True)  # noqa: E731
+
+    if args.figures:
+        save_figures(env, args.figures, "start")
+    counts = collect(env, buffer, args.steps, None, 1.0, args.noise)
+    log(f"teacher collection {counts}  buffer {buffer.size}")
+    if args.figures:
+        save_figures(env, args.figures, "teacher_end")
+    best_val = fit(model, buffer, args.epochs, args.batch, args.lr, args.weight_decay, 16, device, log)
+    result = evaluate(env, model, args.eval_steps)
+    best_rate = result["succeeded"] / max(sum(result.values()), 1)
+    best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    log(f"round 0  val {best_val:.4f}  eval {result}  success {best_rate:.1%}")
+    if args.figures:
+        save_figures(env, args.figures, "round0", model)
+    for r in range(1, args.dagger_rounds + 1):
+        counts = collect(env, buffer, args.dagger_steps, model, 0.5**r, args.noise)
+        log(f"student collection round {r} {counts}  buffer {buffer.size}")
+        val = fit(
+            model,
+            buffer,
+            args.dagger_epochs,
+            args.batch,
+            args.lr * 0.6**r,
+            args.weight_decay,
+            16,
+            device,
+            log,
+        )
+        result = evaluate(env, model, args.eval_steps)
+        rate = result["succeeded"] / max(sum(result.values()), 1)
+        log(f"round {r}  val {val:.4f}  eval {result}  success {rate:.1%}")
+        if args.figures:
+            save_figures(env, args.figures, f"round{r}", model)
+        if rate >= best_rate:
+            best_rate, best_state = rate, {k: v.detach().clone() for k, v in model.state_dict().items()}
+    torch.save({"config": model.config.__dict__, "state_dict": best_state, "success": best_rate}, args.out)
+    log(f"saved {args.out}  (best success {best_rate:.1%})")
+    env.close()
+    app.close()
+
+
+if __name__ == "__main__":
+    main()
