@@ -134,3 +134,92 @@ class FR3Ros:
         self._call(self._stop)
 
 
+def open_sdk_rpc(ip: str, wait_state: float = 1.5):
+    """Open a FAIRINO SDK handle that works next to the ROS driver. / 드라이버 옆에서 쓰는 SDK 핸들.
+
+    The controller serves its real-time state port (20004) to one client only, and the driver
+    holds it. The SDK then loops forever trying to reconnect, and every XML-RPC call blocks
+    while that loop runs. So: wait briefly for state packets and, if none arrive, stop the
+    state thread and make the handle XML-RPC only (gripper and error-reset commands still work).
+
+    제어기는 실시간 상태 포트(20004)를 한 클라이언트에만 주고 드라이버가 잡고 있다. SDK 는 그동안
+    재접속 루프를 돌며 모든 XML-RPC 호출을 막으므로, 상태 패킷이 안 오면 상태 스레드를 끄고
+    XML-RPC 전용으로 쓴다.
+    """
+    import contextlib
+    import io
+
+    from fairino import Robot  # vendor SDK / 제조사 SDK
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        rpc = Robot.RPC(ip)
+    if not Robot.RPC.is_conect:
+        Robot.RPC.is_conect = True
+        raise ConnectionError(f"{ip}: XML-RPC (20003) connection failed")
+
+    def has_state() -> bool:
+        pkg = rpc.robot_state_pkg
+        return not isinstance(pkg, type) and int(pkg.frame_head) == 0x5A5A
+
+    t0 = time.time()
+    while time.time() - t0 < wait_state and not has_state():
+        time.sleep(0.05)
+    if not has_state():
+        rpc.closeRPC_state = True
+        rpc.robot_realstate_exit = True
+        try:
+            rpc.stop_event.set()
+        except AttributeError:
+            pass
+        rpc.connect_to_robot = lambda: True
+        rpc.reconnect_flag = False
+    return rpc
+
+
+class SdkGripper:
+    """Parallel gripper through the FAIRINO SDK (controller RS-485). / 제어기 경유 그리퍼.
+
+    ``half_gap`` values are metres; the controller takes a percentage of the stroke where
+    ``open_pct`` is fully open.
+    """
+
+    def __init__(
+        self, rpc, stroke: float = 0.095, open_pct: int = 100, index: int = 1, vel: int = 30, force: int = 30
+    ):
+        self.rpc = rpc
+        self.stroke = stroke
+        self.open_pct = open_pct
+        self.index = index
+        self.vel = vel
+        self.force = force
+        self._last = stroke / 2.0
+
+    def command(self, half_gap: float, blocking: bool = False) -> None:
+        """Send the width; the XML-RPC round trip can take over a second, so the loop must not
+        wait for it: non-blocking calls run in a worker thread while the servo stream continues.
+
+        XML-RPC 왕복이 1 초를 넘길 수 있어 루프가 기다리면 서보 스트림이 끊긴다. 비차단 호출은
+        작업 스레드에서 보낸다.
+        """
+        import threading
+
+        width = max(0.0, min(self.stroke, 2.0 * float(half_gap)))
+        pct = width / self.stroke * 100.0
+        pos = int(round(pct if self.open_pct == 100 else 100.0 - pct))
+        self._last = width / 2.0
+
+        def send() -> None:
+            err = self.rpc.MoveGripper(self.index, pos, self.vel, self.force, 5000, 1, 0, 0.0, 0, 0)
+            if err != 0:
+                print(f"[gripper] MoveGripper error {err}", flush=True)
+
+        if blocking:
+            send()
+            time.sleep(1.5)
+        else:
+            threading.Thread(target=send, daemon=True).start()
+
+    def half_gap(self) -> float:
+        return self._last
+
+
