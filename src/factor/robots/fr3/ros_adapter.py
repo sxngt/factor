@@ -22,3 +22,115 @@ from factor.robots.fr3.kinematics import FR3Kinematics, FR3Params, top_down_rota
 JOINTS = ("j1", "j2", "j3", "j4", "j5", "j6")
 
 
+class FR3Ros:
+    """Streaming FR3 over the FACTOR ROS 2 driver. / ROS 2 드라이버 위의 FR3.
+
+    Parameters
+    ----------
+    node
+        An ``rclpy`` node owned by the caller (spun by the caller between ticks).
+    params, branch
+        Kinematic parameters and the IK branch of the grasp posture.
+    grip_offset
+        Tool-frame vector from the tool tip to the grip point.
+    tool_yaw
+        Rotation of the finger axis about world z (the task row direction).
+    """
+
+    def __init__(
+        self,
+        node,
+        params: FR3Params,
+        branch: tuple[int, int, int],
+        grip_offset: np.ndarray,
+        tool_yaw: float,
+        finger_axis: str = "y",
+        finger_sign: int = 1,
+    ):
+        import rclpy  # noqa: F401
+        from sensor_msgs.msg import JointState
+        from std_srvs.srv import Trigger
+
+        self.node = node
+        self.kin = FR3Kinematics(params)
+        self.branch = branch
+        self.grip_offset = np.asarray(grip_offset, dtype=float)
+        self.rotation = top_down_rotation(finger_axis, finger_sign, yaw=tool_yaw)
+        self._q: np.ndarray | None = None
+        self._msg = JointState
+        node.create_subscription(JointState, "/joint_states", self._on_joints, 10)
+        self._pub = node.create_publisher(JointState, "/fr/servo_target", 10)
+        self._start = node.create_client(Trigger, "/fr/servo_start")
+        self._stop = node.create_client(Trigger, "/fr/servo_stop")
+        self._reset = node.create_client(Trigger, "/fr/reset_error")
+
+    def _on_joints(self, msg) -> None:
+        pos = dict(zip(msg.name, msg.position, strict=False))
+        if all(j in pos for j in JOINTS):
+            self._q = np.array([pos[j] for j in JOINTS], dtype=float)
+
+    def _spin(self, seconds: float = 0.0) -> None:
+        import rclpy
+
+        rclpy.spin_once(self.node, timeout_sec=seconds)
+
+    def wait_ready(self, timeout: float = 10.0) -> np.ndarray:
+        t0 = time.time()
+        while self._q is None and time.time() - t0 < timeout:
+            self._spin(0.1)
+        if self._q is None:
+            raise RuntimeError("no /joint_states (is the driver running?)")
+        return self._q.copy()
+
+    # ---- Robot protocol
+    def joint_positions(self) -> np.ndarray:
+        self._spin(0.0)
+        if self._q is None:
+            raise RuntimeError("no joint state yet")
+        return self._q.copy()
+
+    def grip_point(self) -> np.ndarray:
+        tool = self.kin.tool(self.joint_positions())
+        return tool[:3, 3] + tool[:3, :3] @ self.grip_offset
+
+    def solve_ik(self, grip_point: np.ndarray) -> np.ndarray | None:
+        pose = np.eye(4)
+        pose[:3, :3] = self.rotation
+        pose[:3, 3] = np.asarray(grip_point, dtype=float) - self.rotation @ self.grip_offset
+        return self.kin.inverse(pose, self.branch)
+
+    def stream_target(self, joint_positions: np.ndarray) -> None:
+        msg = self._msg()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.name = list(JOINTS)
+        msg.position = [float(v) for v in joint_positions]
+        self._pub.publish(msg)
+
+    def _call(self, client, timeout: float = 5.0):
+        import rclpy
+
+        if not client.wait_for_service(timeout_sec=3.0):
+            raise RuntimeError(f"{client.srv_name} unavailable (driver without servo stream?)")
+        future = client.call_async(client.srv_type.Request())
+        rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
+        return future.result()
+
+    def start_streaming(self) -> None:
+        # A stopped controller ignores ServoJ until its error state is reset (FR3 v3.8.6).
+        # 정지 상태의 제어기는 에러 리셋 전까지 ServoJ 를 무시한다.
+        # The driver's error flag lags the reset by a status cycle: retry briefly.
+        # 드라이버의 에러 플래그는 리셋보다 한 상태 주기 늦게 풀린다: 잠시 재시도.
+        result = None
+        for _ in range(4):
+            self._call(self._reset)
+            time.sleep(0.5)
+            result = self._call(self._start)
+            if result is not None and result.success:
+                break
+        if result is None or not result.success:
+            raise RuntimeError(f"servo stream refused: {None if result is None else result.message}")
+
+    def stop_streaming(self) -> None:
+        self._call(self._stop)
+
+
