@@ -223,3 +223,56 @@ class SdkGripper:
         return self._last
 
 
+class RosGripper:
+    """Gripper through the driver's MoveIt action. / 드라이버의 MoveIt 액션 경유 그리퍼.
+
+    The driver owns the only SDK handle that can drive the AG-95 reliably (it activates the
+    gripper after a controller power cycle and clamps the width); the loop sends the half-gap
+    as a one-point trajectory and never waits for it, so the servo stream keeps flowing.
+
+    드라이버가 그리퍼를 책임진다(전원 재투입 후 활성화, 폭 클램프). 루프는 반개구를 한 점짜리
+    궤적으로 보내고 기다리지 않는다.
+    """
+
+    def __init__(self, node, joint: str = "ag95_left_finger_joint", action: str | None = None):
+        from control_msgs.action import FollowJointTrajectory
+        from rclpy.action import ActionClient
+
+        self.node = node
+        self.joint = joint
+        self._msg = FollowJointTrajectory
+        self._client = ActionClient(
+            node, FollowJointTrajectory, action or "/ag95_gripper_controller/follow_joint_trajectory"
+        )
+        self._last = 0.03
+        if not self._client.wait_for_server(timeout_sec=5.0):
+            raise RuntimeError("gripper action server unavailable (driver running?)")
+
+    def command(self, half_gap: float, blocking: bool = False) -> None:
+        from builtin_interfaces.msg import Duration
+        from trajectory_msgs.msg import JointTrajectoryPoint
+
+        goal = self._msg.Goal()
+        goal.trajectory.joint_names = [self.joint]
+        point = JointTrajectoryPoint()
+        point.positions = [float(half_gap)]
+        point.time_from_start = Duration(sec=1)
+        goal.trajectory.points = [point]
+        self._last = float(half_gap)
+        future = self._client.send_goal_async(goal)
+        if blocking:
+            import rclpy
+
+            rclpy.spin_until_future_complete(self.node, future, timeout_sec=3.0)
+            handle = future.result()
+            if handle is not None and handle.accepted:
+                rclpy.spin_until_future_complete(self.node, handle.get_result_async(), timeout_sec=8.0)
+
+    def half_gap(self) -> float:
+        return self._last
+
+
+def tool_yaw_from_anchor(anchor_in_base: np.ndarray) -> float:
+    """Finger-axis yaw that aligns with the anchor's x axis. / 앵커 x 축에 맞춘 핑거축 yaw."""
+    rot = np.asarray(anchor_in_base, dtype=float)[:3, :3]
+    return math.atan2(rot[1, 0], rot[0, 0])
