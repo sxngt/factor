@@ -83,3 +83,78 @@ setInterval(tick,200); tick();
 """
 
 
+class Handler(http.server.SimpleHTTPRequestHandler):
+    """Serve the telemetry directory plus the page and a log tail. / 디렉터리 + 페이지 + 로그 꼬리."""
+
+    def do_GET(self):  # noqa: N802 (http.server API)
+        if self.path in ("/", "/index.html"):
+            body = PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path.startswith("/log.tail"):
+            body = self._log_tail().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def log_message(self, *args):  # quiet / 조용히
+        pass
+
+    def _log_tail(self, n: int = 40) -> str:
+        path = os.path.join(self.directory, "log.jsonl")
+        if not os.path.exists(path):
+            return ""
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 64_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()[-n:]
+        out = []
+        for line in lines:
+            try:
+                t = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            c = t.get("correction_mm_deg", [0, 0, 0])
+            out.append(
+                f"{t.get('t', 0):7.1f}s  step {t.get('step', 0):4d}  {t.get('phase', ''):<14} "
+                f"corr {c[0]:+5.1f} {c[1]:+5.1f} mm {c[2]:+5.2f}°  p(grasped) {t.get('grasped', 0):.2f}  "
+                f"nudge {t.get('nudge', ['-', '-'])}  {t.get('event', '')}"
+            )
+        return "\n".join(out)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dir", default="logs/factor/live")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--bind", default="0.0.0.0")
+    args = ap.parse_args()
+    os.makedirs(args.dir, exist_ok=True)
+    directory = os.path.abspath(args.dir)
+
+    class BoundHandler(Handler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=directory, **kw)
+
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.ThreadingTCPServer((args.bind, args.port), BoundHandler) as httpd:
+        print(f"[factor-view] http://localhost:{args.port}  ({directory})", flush=True)
+        httpd.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
