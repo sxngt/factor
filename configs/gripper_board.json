@@ -1,0 +1,24 @@
+{
+  "dict": "DICT_4X4_50",
+  "marker_size_m": 0.025,
+  "markers": {
+    "10": [
+      -0.015,
+      0.015
+    ],
+    "11": [
+      0.015,
+      0.015
+    ],
+    "12": [
+      -0.015,
+      -0.015
+    ],
+    "13": [
+      0.015,
+      -0.015
+    ]
+  },
+  "frame": "origin = center of the 4 markers, x right, y up (away from the fold), z = board normal (markers face); corners TL,TR,BR,BL as tower_mat",
+  "generated_by": "tools/aruco_markers.py"
+}
