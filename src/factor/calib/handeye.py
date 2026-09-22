@@ -165,3 +165,274 @@ class Prediction:
     visible: bool
 
 
+@dataclass
+class ActiveHandEye:
+    """Joint estimate of camera-in-base ``X`` and board-on-flange ``Y`` with active pose choice.
+
+    카메라-베이스 X 와 보드-플랜지 Y 의 공동 추정 + 능동 자세 선택.
+
+    Parameters
+    ----------
+    camera_matrix, distortion
+        Intrinsics of the fixed camera.
+    board
+        Gripper board geometry.
+    camera_in_base_prior
+        Starting guess of ``X`` (for example previous anchor pose · current anchor detection).
+    prior_sigma
+        (rotation rad, translation m) standard deviation of that guess; weak by default.
+    pixel_sigma
+        Corner noise floor (px); the working value is re-estimated from the residuals.
+    """
+
+    camera_matrix: np.ndarray
+    distortion: np.ndarray
+    board: GripperBoard
+    camera_in_base_prior: np.ndarray
+    prior_sigma: tuple[float, float] = (math.radians(10.0), 0.05)
+    pixel_sigma: float = 0.35
+    fk_sigma: tuple[float, float] = (
+        math.radians(0.03),
+        0.0003,
+    )  # per-pose kinematic error (rad, m) / 자세별 기구학 오차
+    image_size: tuple[int, int] = (2592, 1944)
+    min_facing_cos: float = math.cos(math.radians(78.0))
+    min_marker_px: float = 18.0
+    margin_px: float = 40.0
+    observations: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self.camera_matrix = np.asarray(self.camera_matrix, dtype=float)
+        self.distortion = np.asarray(self.distortion, dtype=float)
+        self.X = np.asarray(self.camera_in_base_prior, dtype=float).copy()
+        self.Y: np.ndarray | None = None
+        self.sigma = self.pixel_sigma
+        self._prior_w = np.array([1 / self.prior_sigma[0]] * 3 + [1 / self.prior_sigma[1]] * 3)
+        self._fk_var0 = np.array([self.fk_sigma[0] ** 2] * 3 + [self.fk_sigma[1] ** 2] * 3)
+        self._fk_var = self._fk_var0.copy()
+        self._mount_w = np.array([1 / math.radians(90.0)] * 3 + [1 / 0.5] * 3)  # keeps Y regular / Y 정칙화
+
+    # ---- state
+    @property
+    def ready(self) -> bool:
+        return self.Y is not None
+
+    def board_in_camera(self, flange_in_base: np.ndarray, x=None, y=None) -> np.ndarray:
+        x = self.X if x is None else x
+        y = self.Y if y is None else y
+        return np.linalg.inv(x) @ flange_in_base @ y
+
+    def initialise_mount(self, flange_in_base: np.ndarray, board_in_camera: np.ndarray) -> None:
+        """First sighting: ``Y = T_BF⁻¹ · X · T_CG`` with the current ``X``. / 첫 관측으로 Y 초기화."""
+        self.Y = np.linalg.inv(flange_in_base) @ self.X @ board_in_camera
+        self._mount_prior = self.Y.copy()
+
+    def add(self, flange_in_base, ids, image_points, tag: str = "") -> None:
+        """Add one averaged detection (marker ids, (n·4, 2) corners). / 관측 하나 추가."""
+        self.observations.append(
+            Observation(
+                np.asarray(flange_in_base, dtype=float),
+                self.board.object_points(ids),
+                np.asarray(image_points, dtype=float).reshape(-1, 2),
+                tag,
+            )
+        )
+
+    # ---- residuals and Jacobians (12 local parameters: δX, δY)
+    def _data_residual(self, x, y, obs=None) -> np.ndarray:
+        obs = self.observations if obs is None else obs
+        if not obs:
+            return np.zeros(0)
+        out = []
+        for o in obs:
+            uv = project(
+                self.camera_matrix,
+                self.distortion,
+                self.board_in_camera(o.flange_in_base, x, y),
+                o.object_points,
+            )
+            out.append((uv - o.image_points).ravel())
+        return np.concatenate(out)
+
+    def _whitener(self, o: Observation) -> np.ndarray:
+        """``W`` with ``WᵀW = (σ²I + J_f Σ_f J_fᵀ)⁻¹`` for one pose.
+
+        A kinematic error moves all corners of a pose together, so corners are not independent.
+        ``J_f`` maps a flange perturbation to the corners; ``Σ_f`` is the kinematic error model.
+        기구학 오차는 한 자세의 모든 코너를 함께 움직이므로 코너 잡음은 독립이 아니다.
+        """
+        base = project(
+            self.camera_matrix, self.distortion, self.board_in_camera(o.flange_in_base), o.object_points
+        ).ravel()
+        jac = np.zeros((base.size, 6))
+        for i in range(6):
+            d = np.zeros(6)
+            d[i] = 1e-6
+            moved = np.linalg.inv(self.X) @ perturb(o.flange_in_base, d) @ self.Y
+            jac[:, i] = (
+                project(self.camera_matrix, self.distortion, moved, o.object_points).ravel() - base
+            ) / 1e-6
+        cov = (self.sigma**2) * np.eye(base.size) + jac @ np.diag(self._fk_var) @ jac.T
+        return np.linalg.cholesky(np.linalg.inv(cov)).T
+
+    def _prior_residual(self, x, y) -> np.ndarray:
+        r = [self._prior_w * pose_error(self.camera_in_base_prior, x)]
+        r.append(self._mount_w * pose_error(self._mount_prior, y))
+        return np.concatenate(r)
+
+    def _jacobian(self, fn, h: float = 1e-6) -> tuple[np.ndarray, np.ndarray]:
+        r0 = fn(self.X, self.Y)
+        jac = np.zeros((r0.size, 12))
+        for i in range(12):
+            d = np.zeros(12)
+            d[i] = h
+            jac[:, i] = (fn(perturb(self.X, d[:6]), perturb(self.Y, d[6:])) - r0) / h
+        return r0, jac
+
+    def _block_whiten(self, obs) -> np.ndarray:
+        """Block-diagonal whitening matrix over poses. / 자세별 백색화 행렬의 블록 대각."""
+        ws = [self._whitener(o) for o in obs]
+        n = sum(w.shape[0] for w in ws)
+        out = np.zeros((n, n))
+        i = 0
+        for w in ws:
+            k = w.shape[0]
+            out[i : i + k, i : i + k] = w
+            i += k
+        return out
+
+    def solve(self, iterations: int = 12, huber: float = 3.0) -> dict:
+        """Levenberg-Marquardt over all poses, whitened per pose. / 자세별 백색화 비선형 최소제곱."""
+        if not self.ready or not self.observations:
+            return {}
+        lam = 1e-4
+        cost = None
+        for _ in range(iterations):
+            wb = self._block_whiten(self.observations)
+            rd, jd = self._jacobian(self._data_residual)
+            rw, jw = wb @ rd, wb @ jd
+            rp, jp = self._jacobian(self._prior_residual)
+            a = np.abs(rw)
+            w = np.where(a <= huber, 1.0, huber / np.maximum(a, 1e-12))  # Huber IRLS
+            h = (jw * w[:, None]).T @ jw + jp.T @ jp
+            g = (jw * w[:, None]).T @ rw + jp.T @ rp
+            cost0 = float((w * rw * rw).sum() + (rp * rp).sum())
+            step = np.zeros(12)
+            for _try in range(6):
+                step = -np.linalg.solve(h + lam * np.diag(np.diag(h) + 1e-9), g)
+                x1, y1 = perturb(self.X, step[:6]), perturb(self.Y, step[6:])
+                rw1 = wb @ self._data_residual(x1, y1)
+                rp1 = self._prior_residual(x1, y1)
+                a1 = np.abs(rw1)
+                w1 = np.where(a1 <= huber, 1.0, huber / np.maximum(a1, 1e-12))
+                cost1 = float((w1 * rw1 * rw1).sum() + (rp1 * rp1).sum())
+                if cost1 <= cost0:
+                    self.X, self.Y, cost = x1, y1, cost1
+                    lam = max(lam / 4, 1e-9)
+                    break
+                lam *= 8
+            else:
+                break
+            if np.linalg.norm(step) < 1e-8:
+                break
+        rd = self._data_residual(self.X, self.Y)
+        rw = self._block_whiten(self.observations) @ rd
+        rms = float(np.sqrt(np.mean(rd**2))) if rd.size else float("nan")
+        # Inflate the noise model when the data disagree more than it says (never deflate).
+        # 데이터가 잡음 모델보다 더 어긋나면 모델을 키운다 (줄이지는 않음).
+        dof = rd.size - 12
+        chi = float((rw**2).sum() / dof) if dof >= 24 else 1.0
+        if chi > 1.0:
+            self.sigma = self.pixel_sigma * math.sqrt(chi)
+            self._fk_var = self._fk_var0 * chi
+        return {
+            "reproj_rms_px": rms,
+            "chi2_per_dof": chi,
+            "sigma_px": self.sigma,
+            "cost": cost,
+            "n_obs": len(self.observations),
+        }
+
+    def information(self) -> np.ndarray:
+        """Posterior information (12×12) at the current estimate. / 현재 추정의 정보 행렬."""
+        _, jp = self._jacobian(self._prior_residual)
+        h = jp.T @ jp
+        if self.observations:
+            _, jd = self._jacobian(self._data_residual)
+            jw = self._block_whiten(self.observations) @ jd
+            h = h + jw.T @ jw
+        return h
+
+    def pose_information(self, flange_in_base: np.ndarray, ids=None) -> np.ndarray:
+        """Predicted information of observing the board at ``flange_in_base``. / 후보 자세의 예측 정보."""
+        obj = self.board.object_points(ids)
+        pseudo = Observation(flange_in_base, obj, np.zeros((len(obj), 2)))
+        _, jac = self._jacobian(lambda x, y: self._data_residual(x, y, [pseudo]))
+        jw = self._whitener(pseudo) @ jac
+        return jw.T @ jw
+
+    def predict(self, flange_in_base: np.ndarray) -> Prediction:
+        """Where the board will appear and whether it will be detectable. / 보드가 어디에 보일지."""
+        t = self.board_in_camera(flange_in_base)
+        uv = project(self.camera_matrix, self.distortion, t, self.board.object_points())
+        to_cam = -t[:3, 3] / max(np.linalg.norm(t[:3, 3]), 1e-9)
+        facing = float(t[:3, 2] @ to_cam)
+        quads = uv.reshape(-1, 4, 2)
+        edge = float(min(np.linalg.norm(q[(i + 1) % 4] - q[i]) for q in quads for i in range(4)))
+        w, h = self.image_size
+        m = self.margin_px
+        inside = bool(np.all((uv[:, 0] > m) & (uv[:, 0] < w - m) & (uv[:, 1] > m) & (uv[:, 1] < h - m)))
+        visible = inside and t[2, 3] > 0.1 and facing > self.min_facing_cos and edge > self.min_marker_px
+        return Prediction(uv, facing, edge, visible)
+
+    # ---- what the task needs: peg points in the base frame
+    @staticmethod
+    def point_covariance(
+        cov_x: np.ndarray, x: np.ndarray, anchor_in_camera: np.ndarray, points_anchor
+    ) -> np.ndarray:
+        """Covariance (k,3,3) of anchor points mapped to the base by ``X · T_CA``. / 기둥 점의 베이스 공분산.
+
+        With ``X = X̂ · [R(δr), δt]``: ``p_B = R_X (R(δr) p_C + δt) + t_X`` so
+        ``∂p_B/∂δr = −R_X [p_C]×`` and ``∂p_B/∂δt = R_X``.
+        """
+        pts = np.asarray(points_anchor, dtype=float)
+        p_c = pts @ anchor_in_camera[:3, :3].T + anchor_in_camera[:3, 3]
+        r = x[:3, :3]
+        out = []
+        for p in p_c:
+            jac = np.hstack([-r @ skew(p), r])
+            out.append(jac @ cov_x @ jac.T)
+        return np.stack(out)
+
+    def task_uncertainty(self, information: np.ndarray, anchor_in_camera, points_anchor) -> float:
+        """RMS 1σ (m) of the peg points in the base frame. / 기둥 점들의 1σ RMS (m)."""
+        cov = np.linalg.inv(information)[:6, :6]
+        c = self.point_covariance(cov, self.X, anchor_in_camera, points_anchor)
+        return float(np.sqrt(np.mean(np.trace(c, axis1=1, axis2=2))))
+
+    def mount_consistency(self) -> dict:
+        """Per-pose implied mount ``Y_i = T_BF⁻¹ X T_CG,i`` spread. / 자세별 장착 변환 일관성."""
+        import cv2
+
+        devs, angs = [], []
+        for o in self.observations:
+            ok, rvec, tvec = cv2.solvePnP(
+                o.object_points, o.image_points, self.camera_matrix, self.distortion, flags=cv2.SOLVEPNP_IPPE
+            )
+            if not ok:
+                continue
+            t = np.eye(4)
+            t[:3, :3] = cv2.Rodrigues(rvec)[0]
+            t[:3, 3] = tvec.ravel()
+            yi = np.linalg.inv(o.flange_in_base) @ self.X @ t
+            e = pose_error(self.Y, yi)
+            angs.append(math.degrees(np.linalg.norm(e[:3])))
+            devs.append(1000 * np.linalg.norm(e[3:]))
+        if not devs:
+            return {}
+        return {
+            "pos_rms_mm": float(np.sqrt(np.mean(np.square(devs)))),
+            "rot_rms_deg": float(np.sqrt(np.mean(np.square(angs)))),
+        }
+
+
