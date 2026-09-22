@@ -436,3 +436,64 @@ class ActiveHandEye:
         }
 
 
+# ----------------------------------------------------------------------------- choosing the next pose
+@dataclass
+class Candidate:
+    """A reachable pose the robot may visit. / 로봇이 갈 수 있는 후보 자세."""
+
+    joints: np.ndarray
+    flange_in_base: np.ndarray
+    label: str = ""
+    used: bool = False
+    failed: int = 0
+
+
+def move_time(
+    dq: np.ndarray, v_max: float = math.radians(24.0), a_max: float = math.radians(36.0), floor: float = 0.8
+) -> float:
+    """Duration of a minimum-jerk joint move within speed and acceleration limits.
+
+    최소 저크 관절 이동 시간: 최고 속도 1.875Δ/T ≤ v, 최고 가속도 5.77Δ/T² ≤ a.
+    """
+    d = float(np.max(np.abs(dq)))
+    return max(floor, 1.875 * d / v_max, math.sqrt(5.7735 * d / a_max))
+
+
+def choose_next(
+    est: ActiveHandEye,
+    candidates: list,
+    current_joints: np.ndarray,
+    anchor_in_camera: np.ndarray,
+    points_anchor,
+    dwell_s: float = 1.4,
+) -> tuple[Candidate | None, dict]:
+    """Greedy information-per-second choice. / 초당 정보 이득이 가장 큰 후보.
+
+    Score = log(σ_now² / σ_after²) / (move time + dwell), where σ is the RMS 1σ of the peg points
+    in the base frame. Unseen-board or blocked candidates are skipped.
+    """
+    h = est.information()
+    now = est.task_uncertainty(h, anchor_in_camera, points_anchor)
+    best, best_score, best_info = None, -1.0, {}
+    for c in candidates:
+        if c.used or c.failed >= 1:
+            continue
+        pred = est.predict(c.flange_in_base)
+        if not pred.visible:
+            continue
+        after = est.task_uncertainty(
+            h + est.pose_information(c.flange_in_base), anchor_in_camera, points_anchor
+        )
+        t = move_time(c.joints - current_joints) + dwell_s
+        score = 2.0 * math.log(now / max(after, 1e-12)) / t
+        if score > best_score:
+            best, best_score = c, score
+            best_info = {
+                "sigma_now_mm": now * 1e3,
+                "sigma_after_mm": after * 1e3,
+                "seconds": t,
+                "score": score,
+                "facing": pred.facing_cos,
+                "marker_px": pred.marker_px,
+            }
+    return best, best_info
