@@ -95,3 +95,73 @@ def average_poses(poses, weights=None) -> np.ndarray:
     return out
 
 
+def project(k: np.ndarray, dist: np.ndarray, t_cam_obj: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Project object points with OpenCV's distortion model (k1 k2 p1 p2 k3), NumPy only.
+
+    OpenCV 왜곡 모델 투영 (NumPy 전용, 후보 수백 개를 빠르게 평가하기 위함).
+    """
+    p = pts @ t_cam_obj[:3, :3].T + t_cam_obj[:3, 3]
+    z = p[:, 2:3]
+    xy = p[:, :2] / np.where(np.abs(z) < 1e-9, 1e-9, z)
+    d = np.zeros(5)
+    d[: min(5, len(dist))] = np.asarray(dist, dtype=float)[:5]
+    k1, k2, p1, p2, k3 = d
+    x, y = xy[:, 0], xy[:, 1]
+    r2 = x * x + y * y
+    radial = 1 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2
+    xd = x * radial + 2 * p1 * x * y + p2 * (r2 + 2 * x * x)
+    yd = y * radial + p1 * (r2 + 2 * y * y) + 2 * p2 * x * y
+    return np.stack([k[0, 0] * xd + k[0, 2], k[1, 1] * yd + k[1, 2]], axis=1)
+
+
+# ----------------------------------------------------------------------------- the gripper board
+@dataclass(frozen=True)
+class GripperBoard:
+    """Marker corners of the gripper board in its own frame. / 그리퍼 보드의 마커 모서리 (보드 좌표).
+
+    Frame: origin at the board centre, z = board normal (markers face), corners in OpenCV order.
+    """
+
+    dictionary: str
+    size: float
+    centers: dict  # id -> (x, y)
+
+    @classmethod
+    def from_json(cls, path: str) -> GripperBoard:
+        with open(path, encoding="utf-8") as f:
+            m = json.load(f)
+        return cls(m["dict"], float(m["marker_size_m"]), {int(k): tuple(v) for k, v in m["markers"].items()})
+
+    @property
+    def ids(self) -> tuple[int, ...]:
+        return tuple(sorted(self.centers))
+
+    def corners(self, marker_id: int) -> np.ndarray:
+        cx, cy = self.centers[marker_id]
+        h = self.size / 2.0
+        return np.array([[cx - h, cy + h, 0], [cx + h, cy + h, 0], [cx + h, cy - h, 0], [cx - h, cy - h, 0]])
+
+    def object_points(self, ids=None) -> np.ndarray:
+        ids = self.ids if ids is None else ids
+        return np.concatenate([self.corners(int(i)) for i in ids])
+
+
+# ----------------------------------------------------------------------------- the estimator
+@dataclass
+class Observation:
+    flange_in_base: np.ndarray  # T_BF from forward kinematics / 정기구학 플랜지 포즈
+    object_points: np.ndarray  # (n, 3) board-frame corners / 보드 좌표 코너
+    image_points: np.ndarray  # (n, 2) detected corners (px) / 검출 코너
+    tag: str = ""
+
+
+@dataclass
+class Prediction:
+    """What the camera should see at a candidate pose. / 후보 자세에서 보일 것의 예측."""
+
+    image_points: np.ndarray
+    facing_cos: float  # cosine between board normal and the ray to the camera / 보드 법선과 시선의 코사인
+    marker_px: float  # smallest projected marker edge (px) / 가장 작은 마커 변 (px)
+    visible: bool
+
+
