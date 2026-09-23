@@ -229,3 +229,77 @@ def run(
     return curve
 
 
+def main() -> None:
+    from factor.robots.fr3.kinematics import FR3Kinematics, FR3Params, top_down_rotation
+    from factor.robots.fr3.ros_adapter import tool_yaw_from_anchor
+    from factor.scene import load_scene
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scene", default="configs/hanoi.yaml")
+    ap.add_argument("--board", default="configs/gripper_board.json")
+    ap.add_argument("--seeds", type=int, default=10)
+    ap.add_argument("--budget", type=float, default=60.0)
+    ap.add_argument("--strategies", default="active,random,blind")
+    ap.add_argument("--px", type=float, default=0.3, help="board corner noise (px)")
+    ap.add_argument("--fk-mm", type=float, default=0.2, help="per-pose kinematic position error (mm)")
+    ap.add_argument("--fk-deg", type=float, default=0.02, help="per-pose kinematic rotation error (deg)")
+    ap.add_argument("--mat-px", type=float, default=0.3, help="mat corner noise (px)")
+    a = ap.parse_args()
+    scene = load_scene(a.scene)
+    board = GripperBoard.from_json(a.board)
+    kin = FR3Kinematics(FR3Params.from_mapping(scene.robot.kinematics))
+    g = scene.robot.grasp
+    branch = tuple(int(v) for v in g.get("ik_branch", (0, 0, 1)))
+    anchor = np.asarray(scene.anchor_in_base, dtype=float)
+    base_rot = top_down_rotation(
+        str(g.get("finger_axis", "y")), int(g.get("finger_sign", 1)), yaw=tool_yaw_from_anchor(anchor)
+    )
+    grip_offset = np.asarray(scene.robot.grip_offset, dtype=float)
+    peg_top = anchor[2, 3] + 0.062
+    centre = anchor[:3, 3] + np.array([0, 0, 0.062 + 0.06])
+    pose = np.eye(4)
+    pose[:3, :3] = base_rot
+    pose[:3, 3] = centre - base_rot @ grip_offset
+    q0 = kin.inverse(pose, branch)
+    for s in a.strategies.split(","):
+        finals = {10: [], 20: [], 30: [], 45: [], 60: []}
+        npose = []
+        sig = []
+        for seed in range(a.seeds):
+            curve = run(
+                s,
+                scene,
+                board,
+                kin,
+                branch,
+                base_rot,
+                grip_offset,
+                q0,
+                centre,
+                peg_top + 0.035,
+                seed,
+                a.budget,
+                noise=dict(
+                    px_noise=a.px, fk_noise=(a.fk_mm / 1000, math.radians(a.fk_deg)), mat_noise=a.mat_px
+                ),
+            )
+            if not curve:
+                continue
+            npose.append(curve[-1][1])
+            sig.append(curve[-1][3])
+            for t in finals:
+                pts = [c for c in curve if c[0] <= t]
+                if pts:
+                    finals[t].append(pts[-1][2])
+        row = "  ".join(
+            f"t≤{t}s {np.median(v):5.2f}mm(p90 {np.percentile(v, 90):5.2f})" for t, v in finals.items() if v
+        )
+        print(
+            f"{s:7s} poses {np.mean(npose):4.1f} predicted σ {np.median(sig):.2f}mm  "
+            f"peg-point error (median over seeds): {row}",
+            flush=True,
+        )
+
+
+if __name__ == "__main__":
+    main()
