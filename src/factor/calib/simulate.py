@@ -43,3 +43,101 @@ def mat_corners(scene) -> np.ndarray:
     return np.array(out)
 
 
+class Rig:
+    """Ground truth + noisy detections. / 참값과 잡음 검출."""
+
+    def __init__(
+        self,
+        scene,
+        board,
+        kin,
+        q_nominal,
+        rng,
+        px_noise=0.3,
+        fk_noise=(0.0002, 0.00035),  # (m, rad ≈ 0.02°)
+        mat_noise=0.3,
+    ):
+        self.scene, self.board, self.kin, self.rng = scene, board, kin, rng
+        self.k, self.dist = scene.camera.matrix, scene.camera.distortion
+        self.px_noise, self.fk_noise, self.mat_noise = px_noise, fk_noise, mat_noise
+        belief = np.asarray(scene.anchor_in_base, dtype=float)
+        # The tower (with the mat) moved since the scene file was written, and the camera was moved too.
+        # 장면 파일 이후 탑(매트 포함)과 카메라가 모두 옮겨졌다고 가정.
+        self.anchor_true = perturb(
+            belief, np.r_[rng.normal(0, math.radians(2), 3) * [0.2, 0.2, 1], rng.normal(0, 0.02, 2), 0.0]
+        )
+        cam_moved = perturb(
+            np.asarray(scene.camera_in_anchor, dtype=float),
+            np.r_[rng.normal(0, math.radians(3), 3), rng.normal(0, 0.04, 3)],
+        )
+        self.X_true = self.anchor_true @ cam_moved
+        self.anchor_belief = belief
+        # Board taped flat on the gripper body side that faces the camera, ~10 cm above the grip point.
+        # 보드: 카메라 쪽 그리퍼 몸체 옆면에 평평하게, 그립점 위 약 10 cm.
+        f0 = kin.flange(q_nominal)
+        tip = kin.tool(q_nominal)[:3, 3]
+        to_cam = self.X_true[:3, 3] - tip
+        horiz = np.array([to_cam[0], to_cam[1], 0.0])
+        horiz /= np.linalg.norm(horiz)
+        z = horiz
+        y = np.array([0.0, 0.0, 1.0])
+        x = np.cross(y, z)
+        board_in_base = np.eye(4)
+        board_in_base[:3, :3] = np.column_stack([x, y, z])
+        board_in_base[:3, 3] = tip + np.array([0, 0, 0.10]) + 0.045 * horiz
+        self.Y_true = np.linalg.inv(f0) @ board_in_base
+
+    def detect_board(self, q, flange=None):
+        """Detected (ids, corners) at joints q, or None. / 관절 q 에서 보드 검출.
+
+        ``flange`` overrides the true flange pose (to inject kinematic error).
+        실제 플랜지 포즈를 바꿔 넣는다 (기구학 오차 주입용).
+        """
+        flange = self.kin.flange(q) if flange is None else flange
+        t = np.linalg.inv(self.X_true) @ flange @ self.Y_true
+        to_cam = -t[:3, 3] / np.linalg.norm(t[:3, 3])
+        if t[:3, 2] @ to_cam < math.cos(math.radians(72)):  # detector limit / 검출 한계
+            return None
+        uv = project(self.k, self.dist, t, self.board.object_points())
+        if np.any(uv < 0) or np.any(uv[:, 0] > 2592) or np.any(uv[:, 1] > 1944):
+            return None
+        return list(self.board.ids), uv + self.rng.normal(0, self.px_noise, uv.shape)
+
+    ring_radius = 0.052
+    ring_offset = -0.035
+    n_leds = 8
+
+    def detect_leds(self, q, flange=None):
+        """Blue LED centroids on the wrist ring facing the camera, plus a stray blob. / 손목 LED 검출."""
+        flange = self.kin.flange(q) if flange is None else flange
+        ang = np.arange(self.n_leds) * 2 * math.pi / self.n_leds + 0.3
+        pts = np.stack(
+            [[self.ring_radius * math.cos(a), self.ring_radius * math.sin(a), self.ring_offset] for a in ang]
+        )
+        nrm = np.stack([[math.cos(a), math.sin(a), 0.0] for a in ang])
+        t = np.linalg.inv(self.X_true) @ flange
+        p3 = pts @ t[:3, :3].T + t[:3, 3]
+        n3 = nrm @ t[:3, :3].T
+        vis = np.einsum("ij,ij->i", n3, -p3 / np.linalg.norm(p3, axis=1, keepdims=True)) > 0.3
+        uv = project(self.k, self.dist, t, pts[vis]) + self.rng.normal(0, 1.0, (int(vis.sum()), 2))
+        stray = project(self.k, self.dist, t, np.array([[0.07, 0.03, -0.06]]))  # cable connector glint
+        return np.vstack([uv, stray])
+
+    def fk_reading(self, q):
+        """Forward kinematics with a small model error. / 작은 모델 오차가 섞인 정기구학."""
+        tp, rot = self.fk_noise
+        return perturb(self.kin.flange(q), np.r_[self.rng.normal(0, rot, 3), self.rng.normal(0, tp, 3)])
+
+    def detect_mat(self):
+        import cv2
+
+        obj = mat_corners(self.scene)
+        t = np.linalg.inv(self.X_true) @ self.anchor_true
+        uv = project(self.k, self.dist, t, obj) + self.rng.normal(0, self.mat_noise, (len(obj), 2))
+        _, rvec, tvec = cv2.solvePnP(obj, uv, self.k, self.dist, flags=cv2.SOLVEPNP_IPPE)
+        out = np.eye(4)
+        out[:3, :3] = cv2.Rodrigues(rvec)[0]
+        out[:3, 3] = tvec.ravel()
+        return out
+
+
