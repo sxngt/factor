@@ -141,3 +141,91 @@ class Rig:
         return out
 
 
+def run(
+    strategy: str,
+    scene,
+    board,
+    kin,
+    branch,
+    base_rot,
+    grip_offset,
+    q0,
+    centre,
+    min_tip_z,
+    seed: int,
+    budget: float,
+    frames_per_pose: int = 2,
+    noise=None,
+):
+    rng = np.random.default_rng(seed)
+    rig = Rig(scene, board, kin, q0, rng, **(noise or {}))
+    mats = [rig.detect_mat() for _ in range(3)]
+    t_ca = average_poses(mats)
+    prior = rig.anchor_belief @ np.linalg.inv(t_ca)
+    est = ActiveHandEye(scene.camera.matrix, scene.camera.distortion, board, prior)
+    pts = peg_points()
+    cands = generate(kin, branch, base_rot, centre, grip_offset, q0, min_tip_z, seed=seed)
+    q = q0.copy()
+    clock = 0.0
+    curve = []
+    # First sighting / 첫 관측
+    for c in search_poses(kin, branch, base_rot, centre, grip_offset, q0):
+        clock += move_time(c.joints - q) + 1.4
+        q = c.joints
+        d = rig.detect_board(q)
+        if d is not None:
+            ids, uv = d
+            import cv2
+
+            _, rvec, tvec = cv2.solvePnP(
+                board.object_points(ids), uv, est.camera_matrix, est.distortion, flags=cv2.SOLVEPNP_IPPE
+            )
+            tcg = np.eye(4)
+            tcg[:3, :3] = cv2.Rodrigues(rvec)[0]
+            tcg[:3, 3] = tvec.ravel()
+            fk = rig.fk_reading(q)
+            est.initialise_mount(fk, tcg)
+            est.add(fk, ids, uv)
+            break
+    if not est.ready:
+        return None
+    est.solve()
+    while clock < budget:
+        if strategy == "active":
+            c, info = choose_next(est, cands, q, t_ca, pts)
+        else:
+            pool = [
+                c
+                for c in cands
+                if not c.used and (strategy == "blind" or est.predict(c.flange_in_base).visible)
+            ]
+            c = pool[rng.integers(len(pool))] if pool else None
+        if c is None:
+            break
+        dt = move_time(c.joints - q) + 1.4
+        if clock + dt > budget:
+            break
+        clock += dt
+        q = c.joints
+        c.used = True
+        d = rig.detect_board(q)
+        mats.append(rig.detect_mat())
+        if d is None:
+            c.failed += 1
+            continue
+        fk = rig.fk_reading(q)
+        ids, uv = d
+        for _ in range(frames_per_pose - 1):  # averaged frames / 프레임 평균
+            uv = (uv + rig.detect_board(q)[1]) / 2
+        est.add(fk, ids, uv)
+        est.solve()
+        t_ca = average_poses(mats)
+        truth = (rig.anchor_true[:3, :3] @ pts.T).T + rig.anchor_true[:3, 3]
+        a = est.X @ t_ca
+        got = (a[:3, :3] @ pts.T).T + a[:3, 3]
+        err = float(np.sqrt(np.mean(np.sum((got - truth) ** 2, axis=1))))
+        sig = est.task_uncertainty(est.information(), t_ca, pts)
+        curve.append((clock, len(est.observations), err * 1e3, sig * 1e3))
+    return curve
+
+
