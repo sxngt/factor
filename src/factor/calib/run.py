@@ -86,3 +86,66 @@ class CameraSensor:
         return detect_leds(self.last_rgb, roi)
 
 
+class FakeSensor:
+    """Synthetic camera over :class:`factor.calib.simulate.Rig` at the real frame rate.
+
+    실제 프레임 속도로 합성 검출을 돌려주는 가짜 카메라 (러너 전체 시험용).
+    """
+
+    def __init__(self, rig, robot, board: GripperBoard, period: float = 0.375):
+        import cv2
+
+        self.rig, self.robot, self.board, self.period, self.cv2 = rig, robot, board, period, cv2
+        self.t = time.time()
+        self.mat_ids = tuple(m.marker_id for m in rig.scene.fiducials.markers)
+
+    def grab(self, newer_than: float = 0.0):
+        from factor.real.fiducial import FiducialDetection
+
+        due = max(newer_than, self.t) + self.period
+        time.sleep(max(0.0, due - time.time()))
+        self.t = due
+        q = self.robot.joint_positions()
+        board = None
+        hit = self.rig.detect_board(q, self.rig.fk_reading(q))
+        if hit is not None:
+            ids, uv = hit
+            obj = self.board.object_points(ids)
+            _, rvec, tvec = self.cv2.solvePnP(
+                obj, uv, self.rig.k, self.rig.dist, flags=self.cv2.SOLVEPNP_IPPE
+            )
+            pose = np.eye(4)
+            pose[:3, :3] = self.cv2.Rodrigues(rvec)[0]
+            pose[:3, 3] = tvec.ravel()
+            board = FiducialDetection(pose, tuple(ids), 0.3, tuple(uv.reshape(-1, 4, 2)))
+        mat = FiducialDetection(self.rig.detect_mat(), self.mat_ids, 0.3, ())
+        self._q = q
+        return due, board, mat
+
+    def leds(self, roi=None) -> np.ndarray:
+        return self.rig.detect_leds(self._q, self.rig.fk_reading(self._q))
+
+
+def merge_points(sets, radius: float = 8.0) -> np.ndarray:
+    """Average blob centroids that repeat across frames of one pose. / 프레임 간 같은 점 평균."""
+    pts = [p for s in sets for p in np.asarray(s).reshape(-1, 2)]
+    groups: list[list] = []
+    for p in pts:
+        for g in groups:
+            if np.linalg.norm(np.mean(g, axis=0) - p) < radius:
+                g.append(p)
+                break
+        else:
+            groups.append([p])
+    need = max(1, len(sets) // 2)
+    return np.array([np.mean(g, axis=0) for g in groups if len(g) >= need]).reshape(-1, 2)
+
+
+def board_layout(board: GripperBoard):
+    from factor.scene.spec import FiducialLayout, FiducialMarker
+
+    return FiducialLayout(
+        board.dictionary, tuple(FiducialMarker(i, (*board.centers[i], 0.0), board.size) for i in board.ids)
+    )
+
+
