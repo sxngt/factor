@@ -149,3 +149,82 @@ def board_layout(board: GripperBoard):
     )
 
 
+# ----------------------------------------------------------------------------- motion
+class Mover:
+    """Smooth joint-space motion over the servo stream. / 서보 스트림 위의 부드러운 관절 이동."""
+
+    def __init__(self, robot, rate: float = 30.0):
+        self.robot = robot
+        self.dt = 1.0 / rate
+        self.target = robot.joint_positions()
+
+    def hold(self, seconds: float) -> None:
+        t0 = time.time()
+        while time.time() - t0 < seconds:
+            self.robot.stream_target(self.target)
+            time.sleep(self.dt)
+
+    def move(self, q1: np.ndarray) -> float:
+        """Minimum-jerk path to ``q1``; returns the planned duration. / 최소 저크 경로."""
+        q0 = self.target.copy()
+        q1 = np.asarray(q1, dtype=float)
+        dur = move_time(q1 - q0)
+        t0 = time.time()
+        while True:
+            s = min(1.0, (time.time() - t0) / dur)
+            b = s * s * s * (10 - 15 * s + 6 * s * s)
+            self.target = q0 + (q1 - q0) * b
+            self.robot.stream_target(self.target)
+            if s >= 1.0:
+                break
+            time.sleep(self.dt)
+        return dur
+
+    def settle(self, tol_deg: float = 0.05, still_s: float = 0.25, timeout: float = 2.0) -> np.ndarray:
+        """Hold until the measured joints sit on the target. / 실제 관절이 목표에 멈출 때까지."""
+        t0 = time.time()
+        since = None
+        while time.time() - t0 < timeout:
+            self.robot.stream_target(self.target)
+            q = self.robot.joint_positions()
+            if np.degrees(np.abs(q - self.target)).max() < tol_deg:
+                since = since or time.time()
+                if time.time() - since >= still_s:
+                    break
+            else:
+                since = None
+            time.sleep(self.dt)
+        q = self.robot.joint_positions()
+        if np.degrees(np.abs(q - self.target)).max() > 1.0:
+            # The driver ended the stream (limit, error, safety): never keep going blind.
+            # 드라이버가 스트림을 끝냈다 (한계·에러·안전): 멈춘 채 계속하지 않는다.
+            off = float(np.degrees(np.abs(q - self.target)).max())
+            raise RuntimeError(f"robot is not following the servo stream (off by {off:.1f}°)")
+        return q
+
+
+def cartesian_line(robot, mover: Mover, rotation, goal_grip, grip_offset, speed: float = 0.03) -> bool:
+    """Straight grip-point line at fixed tool rotation (first approach). / 고정 자세 직선 이동."""
+    kin = robot.kin
+    start = kin.tool(mover.target)
+    p0 = start[:3, 3] + start[:3, :3] @ grip_offset
+    dist = float(np.linalg.norm(goal_grip - p0))
+    dur = max(1.0, 1.875 * dist / speed)
+    t0 = time.time()
+    while True:
+        s = min(1.0, (time.time() - t0) / dur)
+        b = s * s * s * (10 - 15 * s + 6 * s * s)
+        pose = np.eye(4)
+        pose[:3, :3] = rotation
+        pose[:3, 3] = p0 + (goal_grip - p0) * b - rotation @ grip_offset
+        q = kin.inverse(pose, robot.branch)
+        if q is None:
+            return False
+        q = mover.target + (q - mover.target + math.pi) % (2 * math.pi) - math.pi
+        mover.target = q
+        robot.stream_target(q)
+        if s >= 1.0:
+            return True
+        time.sleep(mover.dt)
+
+
