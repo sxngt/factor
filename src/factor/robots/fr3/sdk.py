@@ -107,3 +107,95 @@ def connect(ip: str = DEFAULT_IP, wait_state: float = 1.5, require_state: bool =
     return rpc
 
 
+def disconnect(ip: str = DEFAULT_IP) -> None:
+    """Close and forget the cached handle. / 캐시된 핸들을 닫는다."""
+    with _HANDLES_LOCK:
+        rpc = _HANDLES.pop(ip, None)
+    if rpc is None:
+        return
+    with contextlib.suppress(Exception), contextlib.redirect_stdout(io.StringIO()):
+        rpc.CloseRPC()
+
+
+@dataclass
+class RobotStatus:
+    """Decoded real-time state packet. / 해석된 실시간 상태 패킷."""
+
+    ok: bool
+    error: str = ""
+    ip: str = ""
+    mode: str = ""  # AUTO / MANUAL
+    robot_state: int = 0  # 1 Stopped, 2 Running, 3 Paused, 4 Drag
+    program_state: int = 0
+    main_code: int = 0
+    sub_code: int = 0
+    estop: int = 0
+    collision: int = 0
+    safety_stop0: int = 0
+    safety_stop1: int = 0
+    motion_done: int = 1
+    enabled: int = -1  # servo enable state; -1 = not in the packet / -1 = 패킷에 없음
+    jnt_ang: list = field(default_factory=list)  # deg
+    jnt_vel: list = field(default_factory=list)  # deg/s
+    jnt_tor: list = field(default_factory=list)  # Nm
+    flange_pos: list = field(default_factory=list)  # mm, deg
+    gripper_active: int = 0
+    gripper_fault: int = 0
+    gripper_position: int = 0  # % of the stroke / 스트로크 %
+    frame_cnt: int = 0
+
+    @property
+    def has_error(self) -> bool:
+        return self.main_code != 0 or self.sub_code != 0
+
+    @property
+    def safety_ok(self) -> bool:
+        return not (self.estop or self.collision or self.safety_stop0 or self.safety_stop1)
+
+    @property
+    def in_limits(self) -> bool:
+        return all(
+            lo - 0.5 <= angle <= hi + 0.5
+            for angle, (lo, hi) in zip(self.jnt_ang, SOFT_LIMITS_DEG, strict=False)
+        )
+
+    def to_dict(self) -> dict:
+        d = dataclasses.asdict(self)
+        d.update(has_error=self.has_error, safety_ok=self.safety_ok, in_limits=self.in_limits)
+        return d
+
+
+def status_from_packet(ip: str, pkg) -> RobotStatus:
+    """Decode an SDK ``robot_state_pkg``. / SDK 상태 패킷 해석."""
+
+    def num(name: str, default: int = 0) -> int:
+        return int(getattr(pkg, name, default))
+
+    def vec(name: str) -> list:
+        return [float(v) for v in getattr(pkg, name, ())]
+
+    return RobotStatus(
+        ok=True,
+        ip=ip,
+        mode=ROBOT_MODE.get(num("robot_mode"), f"?{num('robot_mode')}"),
+        robot_state=num("robot_state"),
+        program_state=num("program_state"),
+        main_code=num("main_code"),
+        sub_code=num("sub_code"),
+        estop=num("EmergencyStop"),
+        collision=num("collisionState"),
+        safety_stop0=num("safety_stop0_state"),
+        safety_stop1=num("safety_stop1_state"),
+        motion_done=num("motion_done", 1),
+        enabled=num("rbtEnableState", -1),
+        jnt_ang=vec("jt_cur_pos"),
+        jnt_vel=vec("actual_qd"),
+        jnt_tor=vec("jt_cur_tor"),
+        flange_pos=vec("flange_cur_pos"),
+        gripper_active=num("gripper_active"),
+        gripper_fault=num("gripper_fault"),
+        gripper_position=num("gripper_position"),
+        frame_cnt=num("frame_cnt"),
+    )
+
+
