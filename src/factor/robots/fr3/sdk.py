@@ -199,3 +199,63 @@ def status_from_packet(ip: str, pkg) -> RobotStatus:
     )
 
 
+def read_status(ip: str = DEFAULT_IP, timeout: float = 3.0) -> RobotStatus:
+    """Fresh status from the state port; ``ok=False`` if this process cannot hold it.
+
+    상태 포트에서 읽은 최신 상태. 이 프로세스가 포트를 못 잡으면 ``ok=False``.
+    """
+    try:
+        rpc = connect(ip, wait_state=timeout)
+        if not has_state(rpc):
+            raise ConnectionError("no real-time state (is the driver holding port 20004?)")
+        first = int(rpc.robot_state_pkg.frame_cnt)
+        t0 = time.time()
+        while time.time() - t0 < min(timeout, 0.5) and int(rpc.robot_state_pkg.frame_cnt) == first:
+            time.sleep(0.01)
+        return status_from_packet(ip, rpc.robot_state_pkg)
+    except Exception as exc:
+        return RobotStatus(ok=False, ip=ip, error=f"{type(exc).__name__}: {exc}")
+
+
+def stop_motion(rpc, lock: threading.Lock | None = None) -> int:
+    """``StopMotion`` and end any servo session. / 즉시 정지 + 서보 세션 종료.
+
+    ``lock`` guards the SDK's ``ServerProxy``, which is not thread safe. A stop must not wait
+    long for it, so after 0.5 s the call goes out anyway.
+    SDK 의 ServerProxy 는 스레드 안전하지 않아 잠금을 쓰되, 정지는 0.5 s 이상 기다리지 않는다.
+    """
+    held = lock.acquire(timeout=0.5) if lock is not None else False
+    try:
+        err = rpc.StopMotion()
+        with contextlib.suppress(Exception):
+            rpc.ServoMoveEnd()
+        return err
+    finally:
+        if held:
+            lock.release()
+
+
+def stop(ip: str = DEFAULT_IP) -> int:
+    """``StopMotion`` on the controller at ``ip``. / ``ip`` 제어기에 즉시 정지."""
+    return stop_motion(connect(ip))
+
+
+def reset_errors(ip: str = DEFAULT_IP) -> int:
+    """``ResetAllError``: clear collision and error flags. / 충돌·에러 플래그 해제."""
+    return connect(ip).ResetAllError()
+
+
+def versions(ip: str = DEFAULT_IP) -> dict:
+    """SDK and controller software versions. / SDK·제어기 소프트웨어 버전."""
+    out: dict = {}
+    try:
+        rpc = connect(ip)
+        ret = rpc.GetSDKVersion()
+        out["sdk"] = ret[1] if isinstance(ret, tuple) and ret[0] == 0 else ret
+        ret = rpc.GetSoftwareVersion()
+        out["software"] = list(ret[1:]) if isinstance(ret, tuple) and ret[0] == 0 else ret
+    except Exception as exc:
+        out["error"] = str(exc)
+    return out
+
+
