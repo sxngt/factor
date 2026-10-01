@@ -259,3 +259,78 @@ def versions(ip: str = DEFAULT_IP) -> dict:
     return out
 
 
+class SdkArm:
+    """The real arm as seen by the driver: state packet in, ServoJ out. / 드라이버가 보는 실제 팔.
+
+    Owns the state port (``require_state``) and the lock that serialises XML-RPC calls between
+    the servo stream, the gripper and the services.
+    상태 포트를 소유하고, 서보 스트림·그리퍼·서비스의 XML-RPC 호출을 직렬화하는 잠금을 가진다.
+    """
+
+    fake = False
+
+    def __init__(self, ip: str):
+        self.ip = ip
+        self.rpc = connect(ip, require_state=True)
+        self.lock = threading.Lock()
+        self._count = -1
+        self._count_t = time.monotonic()
+
+    def sample(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+        """Joints (rad), velocities (rad/s), torques (Nm), and whether the packet is fresh.
+
+        관절(rad)·속도(rad/s)·토크(Nm)와 패킷 신선도. ``frame_cnt`` 가 1 s 멈추면 stale.
+        """
+        pkg = self.rpc.robot_state_pkg
+        count = int(pkg.frame_cnt)
+        now = time.monotonic()
+        if count != self._count:
+            self._count = count
+            self._count_t = now
+        fresh = now - self._count_t < 1.0
+        q = np.radians([float(v) for v in pkg.jt_cur_pos])
+        qd = np.radians([float(v) for v in pkg.actual_qd])
+        tau = np.array([float(v) for v in pkg.jt_cur_tor])
+        return q, qd, tau, fresh
+
+    def status(self) -> RobotStatus:
+        return status_from_packet(self.ip, self.rpc.robot_state_pkg)
+
+    def ready_for_motion(self) -> tuple[bool, str]:
+        """ServoJ needs AUTO mode, no safety stop and no error. / AUTO·안전 정상·에러 없음 필요."""
+        st = self.status()
+        ok = st.mode == "AUTO" and st.safety_ok and not st.has_error
+        return ok, f"mode {st.mode} / safety_ok {st.safety_ok} / error {st.main_code}/{st.sub_code}"
+
+    def call(self, name: str, *args) -> int:
+        """Locked XML-RPC call by method name. / 잠금 아래 XML-RPC 호출."""
+        with self.lock:
+            return getattr(self.rpc, name)(*args)
+
+    def stop(self) -> int:
+        return stop_motion(self.rpc, self.lock)
+
+    # ---- servo session (see factor.robots.fr3.servo.ServoStream) / 서보 세션
+    def servo_begin(self) -> None:
+        err = self.call("ServoMoveStart")
+        if err != 0:
+            raise RuntimeError(f"ServoMoveStart error {err}")
+
+    def servo_command(self, q_rad: np.ndarray, cmd_t: float) -> None:
+        q_deg = [float(v) for v in np.degrees(q_rad)]
+        err = self.call("ServoJ", q_deg, [0.0, 0.0, 0.0, 0.0], 0.0, 0.0, cmd_t, 0.0, 0.0)
+        if err != 0:
+            raise RuntimeError(f"ServoJ error {err}")
+
+    def servo_end(self, failed: bool) -> None:
+        with contextlib.suppress(Exception):
+            self.call("ServoMoveEnd")
+        if failed:
+            with contextlib.suppress(Exception):
+                self.stop()
+
+    def monitor(self, dev_deg: float, on_trip, log):
+        """Safety monitor reading this arm's state packet. / 이 팔의 상태 패킷을 읽는 안전 감시."""
+        from factor.robots.fr3.safety import SafetyMonitor
+
+        return SafetyMonitor(self.status, stop=self.stop, dev_deg=dev_deg, on_trip=on_trip, log=log)
