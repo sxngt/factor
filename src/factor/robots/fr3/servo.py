@@ -81,3 +81,56 @@ def servo_step(
     return q_cmd + v_new, v_new
 
 
+class FakeArm:
+    """Arm stand-in without an SDK: first-order lag towards the command. / SDK 없는 가짜 팔.
+
+    Measured joints follow the last command with time constant ``tau``.
+    측정 관절이 시정수 ``tau`` 로 마지막 명령을 따라간다.
+    """
+
+    fake = True
+
+    def __init__(self, q0_deg, tau: float = 0.05):
+        self.q = np.radians(np.asarray(q0_deg, dtype=float))
+        self.cmd = self.q.copy()
+        self.qd = np.zeros(6)
+        self.tau = tau
+        self.half_gap = 0.0475
+        self.lock = threading.Lock()
+        self._t = time.monotonic()
+
+    def set_cmd(self, q_rad) -> None:
+        with self.lock:
+            self.cmd = np.asarray(q_rad, dtype=float).copy()
+
+    def sample(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+        with self.lock:
+            now = time.monotonic()
+            dt = max(1e-3, now - self._t)
+            self._t = now
+            q_new = self.q + (self.cmd - self.q) * min(1.0, dt / self.tau)
+            self.qd = (q_new - self.q) / dt
+            self.q = q_new
+            return self.q.copy(), self.qd.copy(), np.zeros(6), True
+
+    def ready_for_motion(self) -> tuple[bool, str]:
+        return True, "fake"
+
+    def stop(self) -> int:
+        with self.lock:
+            self.cmd = self.q.copy()
+        return 0
+
+    def servo_begin(self) -> None:
+        pass
+
+    def servo_command(self, q_rad: np.ndarray, cmd_t: float) -> None:
+        self.set_cmd(q_rad)
+
+    def servo_end(self, failed: bool) -> None:
+        pass
+
+    def monitor(self, dev_deg: float, on_trip, log):
+        return None
+
+
