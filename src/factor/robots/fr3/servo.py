@@ -134,3 +134,120 @@ class FakeArm:
         return None
 
 
+class ServoStream:
+    """One servo session at a time over an arm backend. / 팔 백엔드 위의 서보 세션(한 번에 하나).
+
+    The arm provides ``servo_begin()``, ``servo_command(q_rad, cmd_t)``, ``servo_end(failed)``
+    and ``monitor(dev_deg, on_trip, log)`` (a context manager with ``set_target`` and
+    ``tripped``, or ``None``). ``params`` is read once per session.
+    """
+
+    def __init__(
+        self,
+        arm,
+        params: Callable[[], ServoParams],
+        log: Callable[[str], None] = print,
+        warn: Callable[[str], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.arm = arm
+        self.params = params
+        self.log = log
+        self.warn = warn or log
+        self.clock = clock
+        self.desired: np.ndarray | None = None
+        self.reason = ""
+        self.sent = 0
+        self._target: np.ndarray | None = None
+        self._target_t = 0.0
+        self._target_lock = threading.Lock()
+        self._halt = threading.Event()
+        self._halt.set()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def active(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def set_target(self, q_rad) -> None:
+        """Latest joint target (rad). / 최신 관절 목표(rad)."""
+        with self._target_lock:
+            self._target = np.asarray(q_rad, dtype=float).copy()
+            self._target_t = self.clock()
+
+    def start(self, q0: np.ndarray) -> None:
+        """Start streaming from the measured joints ``q0`` (rad). / 측정 관절에서 스트림 시작."""
+        if self.active:
+            raise RuntimeError("servo stream already running")
+        q0 = np.asarray(q0, dtype=float).copy()
+        self.set_target(q0)
+        self.reason = ""
+        self.sent = 0
+        self._halt = threading.Event()
+        self._thread = threading.Thread(target=self._loop, args=(q0, self._halt), daemon=True)
+        self._thread.start()
+
+    def stop(self, timeout: float = 2.0) -> str:
+        """Request the end and wait for it; returns the end reason. / 종료 요청 후 사유 반환."""
+        self._halt.set()
+        if self._thread is not None:
+            self._thread.join(timeout)
+        return self.reason
+
+    def _loop(self, q_cmd: np.ndarray, halt: threading.Event) -> None:
+        p = self.params()
+        max_step, max_dv, max_jump = p.max_step, p.max_dv, p.max_jump
+        v_cmd = np.zeros_like(q_cmd)
+        reason = ""
+        t0 = time.perf_counter()
+        monitor = self.arm.monitor(p.start_tol_deg, lambda why: halt.set(), self.warn)
+        began = False
+        try:
+            if monitor is not None:
+                monitor.__enter__()
+            self.arm.servo_begin()
+            began = True
+            ticks = 0
+            while not halt.is_set():
+                with self._target_lock:
+                    target = self._target
+                    target_t = self._target_t
+                if self.clock() - target_t > p.servo_timeout:
+                    reason = f"servo target stale > {p.servo_timeout}s"
+                    break
+                if float(np.abs(target - q_cmd).max()) > max_jump:
+                    reason = f"servo target jump > {p.servo_max_jump_deg:.0f} deg"
+                    break
+
+                q_cmd, v_cmd = servo_step(q_cmd, v_cmd, target, max_step, max_dv)
+                self.desired = q_cmd
+                if monitor is not None:
+                    monitor.set_target(np.degrees(q_cmd))
+                self.arm.servo_command(q_cmd, p.cmd_t)
+                self.sent += 1
+                ticks += 1
+
+                lag = t0 + ticks * p.cmd_t - time.perf_counter()
+                if lag > 0:
+                    time.sleep(lag)
+            if monitor is not None and monitor.tripped:
+                reason = f"safety trip: {monitor.tripped}"
+        except Exception as exc:
+            reason = f"servo exception {type(exc).__name__}: {exc}"
+        finally:
+            if began:
+                self.arm.servo_end(failed=bool(reason))
+            elif reason:
+                self.arm.stop()
+            if monitor is not None:
+                monitor.__exit__(None, None, None)
+            self.reason = reason
+            self.desired = None
+            halt.set()
+            message = (
+                f"servo stream end: {reason or 'ok'} (sent {self.sent}, {time.perf_counter() - t0:.1f}s)"
+            )
+            if reason:
+                self.warn(message)
+            else:
+                self.log(message)
