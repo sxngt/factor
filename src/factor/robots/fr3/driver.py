@@ -63,3 +63,218 @@ GRIP_JOINT = "ag95_left_finger_joint"
 FAKE_START_DEG = (61.48, -60.45, 40.49, -70.02, -89.99, -119.55)
 
 
+class FR3Driver(Node):
+    """The driver node. / 드라이버 노드."""
+
+    def __init__(self, args: argparse.Namespace):
+        super().__init__("fr_ros2_driver")
+        defaults = ServoParams()
+        self.declare_parameter("start_tol_deg", defaults.start_tol_deg)
+        self.declare_parameter("max_joint_speed_deg", args.max_joint_speed_deg)
+        self.declare_parameter("max_joint_accel_deg", defaults.max_joint_accel_deg)
+        self.declare_parameter("servo_timeout", defaults.servo_timeout)
+        self.declare_parameter("servo_max_jump_deg", defaults.servo_max_jump_deg)
+        self.declare_parameter("cmd_t", defaults.cmd_t)
+
+        self.fake = args.fake
+        self.cb = ReentrantCallbackGroup()
+        log = self.get_logger()
+        if args.fake:
+            self.arm = FakeArm(args.start_deg)
+            self.gripper = FakeGripper()
+        else:
+            self.arm = sdk.SdkArm(args.ip)
+            self.gripper = ControllerGripper(self.arm, open_pct=args.gripper_open_pct, log=log.info)
+        self.stream = ServoStream(self.arm, self.servo_params, log=log.info, warn=log.warning)
+        self._q: np.ndarray | None = None
+        self._stale_warned = 0.0
+        self._ticks = 0
+
+        self.pub_js = self.create_publisher(JointState, "/joint_states", 10)
+        self.pub_status = self.create_publisher(String, "/fr/status", 10)
+        self.create_subscription(JointState, "/fr/servo_target", self._on_target, 10, callback_group=self.cb)
+        services = {
+            "servo_start": self._srv_servo_start,
+            "servo_stop": self._srv_servo_stop,
+            "stop": self._srv_stop,
+            "reset_error": self._srv_reset,
+            "enable": self._srv_enable,
+            "set_mode_auto": self._srv_auto,
+        }
+        for name, handler in services.items():
+            self.create_service(Trigger, f"/fr/{name}", handler, callback_group=self.cb)
+        self._grip_server = ActionServer(
+            self,
+            FollowJointTrajectory,
+            GRIP_ACTION,
+            execute_callback=self._grip_execute,
+            goal_callback=self._grip_goal,
+            cancel_callback=lambda _goal: CancelResponse.ACCEPT,
+            callback_group=self.cb,
+        )
+        self.create_timer(1.0 / args.rate, self._tick_joints, callback_group=self.cb)
+        self.create_timer(0.5, self._tick_status, callback_group=self.cb)
+        log.info(
+            f"{'FAKE' if args.fake else args.ip}: /joint_states {args.rate:.0f} Hz, servo stream on "
+            f"/fr/servo_target, gripper action {GRIP_ACTION}"
+        )
+
+    # ---- parameters / 파라미터
+    def servo_params(self) -> ServoParams:
+        def value(name: str) -> float:
+            return float(self.get_parameter(name).value)
+
+        return ServoParams(
+            cmd_t=value("cmd_t"),
+            max_joint_speed_deg=value("max_joint_speed_deg"),
+            max_joint_accel_deg=value("max_joint_accel_deg"),
+            servo_timeout=value("servo_timeout"),
+            servo_max_jump_deg=value("servo_max_jump_deg"),
+            start_tol_deg=value("start_tol_deg"),
+        )
+
+    # ---- state / 상태
+    def _tick_joints(self) -> None:
+        try:
+            q, qd, tau, fresh = self.arm.sample()
+        except Exception as exc:
+            self.get_logger().warning(f"state read failed: {exc}", throttle_duration_sec=5.0)
+            return
+        if not fresh:
+            # Publishing a frozen pose would let a client servo against stale joints.
+            # 멈춘 자세를 내보내면 클라이언트가 낡은 관절로 서보한다.
+            if time.monotonic() - self._stale_warned > 5.0:
+                self._stale_warned = time.monotonic()
+                self.get_logger().warning("real-time state packets stopped: holding /joint_states")
+            return
+        self._q = q
+        try:
+            half_gap = float(self.gripper.half_gap())
+        except Exception:
+            half_gap = STROKE_M / 2.0
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = JOINTS + FINGERS
+        msg.position = q.tolist() + [half_gap, half_gap]
+        msg.velocity = qd.tolist() + [0.0, 0.0]
+        msg.effort = tau.tolist() + [0.0, 0.0]
+        self.pub_js.publish(msg)
+        self._ticks += 1
+        if self._ticks % 500 == 0:
+            self.get_logger().info(f"q(deg)={np.degrees(q).round(2).tolist()}")
+
+    def _tick_status(self) -> None:
+        if self.fake:
+            q = self._q if self._q is not None else np.zeros(6)
+            d = {"ok": True, "fake": True, "mode": "AUTO", "jnt_ang": np.degrees(q).round(4).tolist()}
+        else:
+            try:
+                d = self.arm.status().to_dict()
+                d["fake"] = False
+            except Exception as exc:
+                d = {"ok": False, "error": str(exc), "fake": False}
+        d["driver"] = {"servo_active": self.stream.active, "servo_reason": self.stream.reason}
+        self.pub_status.publish(String(data=json.dumps(d, default=str)))
+
+    def current_q(self, wait: float = 1.0) -> np.ndarray | None:
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < wait:
+            if self._q is not None:
+                return self._q.copy()
+            time.sleep(0.02)
+        return None
+
+    # ---- servo stream / 서보 스트림
+    def _on_target(self, msg) -> None:
+        try:
+            d = dict(zip(msg.name, msg.position, strict=False))
+            q = np.array([float(d[j]) for j in JOINTS])
+        except KeyError:
+            return
+        self.stream.set_target(q)
+
+    def _srv_servo_start(self, request, response):
+        if self.stream.active:
+            response.success, response.message = False, "busy: servo stream already running"
+            return response
+        q0 = self.current_q(1.0)
+        if q0 is None:
+            response.success, response.message = False, "no joint state"
+            return response
+        ok, why = self.arm.ready_for_motion()
+        if not ok:
+            response.success, response.message = False, why
+            return response
+        self.stream.start(q0)
+        response.success, response.message = True, "servo stream started"
+        self.get_logger().info(response.message)
+        return response
+
+    def _srv_servo_stop(self, request, response):
+        reason = self.stream.stop()
+        response.success, response.message = True, f"servo stream stopped ({reason or 'requested'})"
+        return response
+
+    # ---- controller services / 제어기 서비스
+    def _rpc(self, what: str, fn, response):
+        if self.fake:
+            response.success, response.message = True, f"fake: {what} no-op"
+            return response
+        try:
+            err = fn()
+            response.success = err == 0
+            response.message = f"{what} -> {'OK' if err == 0 else f'error {err}'}"
+        except Exception as exc:
+            response.success, response.message = False, f"{what} failed: {exc}"
+        self.get_logger().info(response.message)
+        return response
+
+    def _srv_stop(self, request, response):
+        self.stream.stop(timeout=0.5)
+        return self._rpc("StopMotion", self.arm.stop, response)
+
+    def _srv_reset(self, request, response):
+        return self._rpc("ResetAllError", lambda: self.arm.call("ResetAllError"), response)
+
+    def _srv_enable(self, request, response):
+        return self._rpc("RobotEnable(1)", lambda: self.arm.call("RobotEnable", 1), response)
+
+    def _srv_auto(self, request, response):
+        return self._rpc("Mode(0)", lambda: self.arm.call("Mode", 0), response)
+
+    # ---- gripper action / 그리퍼 액션
+    def _grip_goal(self, request):
+        trajectory = request.trajectory
+        if GRIP_JOINT not in trajectory.joint_names or not trajectory.points:
+            self.get_logger().warning("gripper goal rejected: joint name or empty trajectory")
+            return GoalResponse.REJECT
+        return GoalResponse.ACCEPT
+
+    def _grip_execute(self, goal_handle):
+        result = FollowJointTrajectory.Result()
+        trajectory = goal_handle.request.trajectory
+        index = list(trajectory.joint_names).index(GRIP_JOINT)
+        half_gap = float(trajectory.points[-1].positions[index])
+        try:
+            width = self.gripper.move(half_gap)
+            self.get_logger().info(f"gripper -> {2000 * half_gap:.1f} mm (measured {width * 1000:.1f} mm)")
+            result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+            result.error_string = f"width {width * 1000:.1f} mm"
+            goal_handle.succeed()
+        except Exception as exc:
+            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+            result.error_string = f"gripper error: {exc}"
+            self.get_logger().error(result.error_string)
+            goal_handle.abort()
+        return result
+
+    def shutdown(self) -> None:
+        """Stop any stream; the arm is stopped if one was running. / 스트림 정지."""
+        was_active = self.stream.active
+        self.stream.stop(timeout=1.0)
+        if was_active and not self.fake:
+            with contextlib.suppress(Exception):
+                self.arm.stop()
+                self.get_logger().warning("shutdown during a servo stream: StopMotion sent")
+
+
