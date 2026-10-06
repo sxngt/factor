@@ -278,3 +278,52 @@ class FR3Driver(Node):
                 self.get_logger().warning("shutdown during a servo stream: StopMotion sent")
 
 
+def parse_args(argv=None) -> tuple[argparse.Namespace, list[str]]:
+    ap = argparse.ArgumentParser(description="FR3 ROS 2 servo-stream driver / FR3 ROS 2 서보 스트림 드라이버")
+    ap.add_argument("--ip", default=sdk.DEFAULT_IP, help="controller IP (env ROBOT_IP)")
+    ap.add_argument("--fake", action="store_true", help="no SDK, no robot: first-order arm model")
+    ap.add_argument("--rate", type=float, default=50.0, help="/joint_states rate (Hz)")
+    ap.add_argument("--max-joint-speed-deg", type=float, default=30.0)
+    ap.add_argument(
+        "--start-deg",
+        type=float,
+        nargs=6,
+        default=list(FAKE_START_DEG),
+        metavar="DEG",
+        help="--fake start joints (deg)",
+    )
+    ap.add_argument(
+        "--gripper-open-pct",
+        type=int,
+        default=100,
+        choices=(0, 100),
+        help="controller gripper position that means fully open",
+    )
+    return ap.parse_known_args(argv)
+
+
+def main(argv=None) -> None:
+    args, ros_args = parse_args(argv)
+    rclpy.init(args=ros_args)
+    node = None
+    executor = None
+    try:
+        node = FR3Driver(args)
+        executor = MultiThreadedExecutor(num_threads=6)
+        executor.add_node(node)
+        executor.spin()
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        if node is not None:
+            node.shutdown()
+        with contextlib.suppress(Exception):
+            if executor is not None:
+                executor.shutdown(timeout_sec=0.5)
+            if node is not None:
+                node.destroy_node()
+            rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()
