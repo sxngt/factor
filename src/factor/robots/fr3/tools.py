@@ -232,3 +232,50 @@ def power_main(argv=None) -> None:
     sys.exit(0 if ok else 1)
 
 
+def _recover(ip: str, rpc, wait_estop: float) -> bool:
+    """Wait for the e-stop release, then reset, enable, AUTO. / E-stop 해제 대기 후 리셋·enable·AUTO."""
+    print("[recover] 1/3 waiting for the e-stop release (turn the button)...", flush=True)
+    t0 = time.time()
+    while True:
+        st = sdk.read_status(ip, timeout=1.5)
+        if st.ok and st.safety_ok:
+            break
+        if not st.ok and "state" in st.error:
+            print("[recover] cannot read the state port (driver running?); stop the driver first")
+            return False
+        if time.time() - t0 > wait_estop:
+            print(f"[recover] still stopped: estop={st.estop} SI={st.safety_stop0}/{st.safety_stop1}")
+            return False
+        time.sleep(1.0)
+    print("[recover] 2/3 ResetAllError", flush=True)
+    _report("ResetAllError", rpc.ResetAllError())
+    time.sleep(1.0)
+    print("[recover] 3/3 RobotEnable(1) + Mode(0)", flush=True)
+    ok = _report("RobotEnable(1)", rpc.RobotEnable(1))
+    time.sleep(1.0)
+    ok = _report("Mode(0)", rpc.Mode(0)) and ok
+    time.sleep(0.5)
+    return ok
+
+
+# ----------------------------------------------------------------------------- servo probe
+
+
+def probe_offsets(duration: float = 2.0, amplitude_deg: float = 0.3, rate: float = 50.0) -> np.ndarray:
+    """j6 offsets (rad) of the probe: 0 → amplitude → 0, triangular. / 탐색 j6 오프셋(삼각형)."""
+    n = max(2, int(round(duration * rate)))
+    s = np.linspace(0.0, 1.0, n + 1)
+    return np.radians(amplitude_deg) * (1.0 - np.abs(2.0 * s - 1.0))
+
+
+def parse_param(text: str) -> tuple[str, object]:
+    """``name=value`` with numbers as floats. / ``이름=값`` (숫자는 float)."""
+    name, _, raw = text.partition("=")
+    if not name or not raw:
+        raise argparse.ArgumentTypeError(f"expected name=value, got {text!r}")
+    try:
+        return name.strip(), float(raw)
+    except ValueError:
+        return name.strip(), raw.strip()
+
+
