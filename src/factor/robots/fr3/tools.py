@@ -147,3 +147,88 @@ def check_main(argv=None) -> None:
 # ----------------------------------------------------------------------------- power / mode
 
 
+def _show(ip: str) -> sdk.RobotStatus:
+    st = sdk.read_status(ip, timeout=1.5)
+    if not st.ok:
+        print(f"status unavailable: {st.error}")
+        return st
+    print(
+        f"mode {st.mode}  state {sdk.ROBOT_STATE.get(st.robot_state, st.robot_state)}  "
+        f"error {st.main_code}/{st.sub_code}  estop {st.estop}  collision {st.collision}  "
+        f"safety {st.safety_stop0}/{st.safety_stop1}  motion_done {st.motion_done}\n"
+        f"  q(deg) {[round(v, 2) for v in st.jnt_ang]}  flange(mm,deg) {[round(v, 1) for v in st.flange_pos]}"
+    )
+    return st
+
+
+def _report(what: str, err: int) -> bool:
+    print(f"{what} -> {'OK' if err == 0 else f'error {err}'}")
+    return err == 0
+
+
+def power_main(argv=None) -> None:
+    """``factor-fr3-power``: controller power, mode and recovery. / 제어기 전원·모드·복구."""
+    ap = argparse.ArgumentParser(description="FR3 controller power/mode helper")
+    ap.add_argument(
+        "cmd",
+        choices=[
+            "status",
+            "enable",
+            "disable",
+            "auto",
+            "manual",
+            "drag",
+            "stop",
+            "reset",
+            "speed",
+            "recover",
+        ],
+    )
+    ap.add_argument("arg", nargs="?", default="on", help="drag: on|off; speed: 0..100")
+    ap.add_argument("--ip", default=sdk.DEFAULT_IP)
+    ap.add_argument(
+        "--wait-estop", type=float, default=120.0, help="recover: seconds to wait for the e-stop release"
+    )
+    args = ap.parse_args(argv)
+
+    if args.cmd == "status":
+        st = _show(args.ip)
+        if st.ok:
+            print("versions:", sdk.versions(args.ip))
+        sys.exit(0 if st.ok else 1)
+
+    rpc = sdk.connect(args.ip)
+    ok = True
+    if args.cmd == "enable":
+        ok = _report("RobotEnable(1)", rpc.RobotEnable(1))
+        time.sleep(1.0)
+    elif args.cmd == "disable":
+        ok = _report("RobotEnable(0)", rpc.RobotEnable(0))
+        time.sleep(1.0)
+    elif args.cmd == "auto":
+        ok = _report("Mode(0)", rpc.Mode(0))
+        time.sleep(0.5)
+    elif args.cmd == "manual":
+        ok = _report("Mode(1)", rpc.Mode(1))
+        time.sleep(0.5)
+    elif args.cmd == "drag":
+        on = args.arg.lower() in ("on", "1", "true")
+        if on:
+            # Drag teaching needs MANUAL mode. / 드래그 교시는 수동 모드에서.
+            _report("Mode(1)", rpc.Mode(1))
+            time.sleep(0.5)
+        ok = _report(f"DragTeachSwitch({int(on)})", rpc.DragTeachSwitch(1 if on else 0))
+        time.sleep(1.0)
+    elif args.cmd == "stop":
+        ok = _report("StopMotion", sdk.stop_motion(rpc))
+    elif args.cmd == "reset":
+        ok = _report("ResetAllError", rpc.ResetAllError())
+        time.sleep(1.0)
+    elif args.cmd == "speed":
+        ok = _report(f"SetSpeed({args.arg})", rpc.SetSpeed(int(float(args.arg))))
+    elif args.cmd == "recover":
+        ok = _recover(args.ip, rpc, args.wait_estop)
+    _show(args.ip)
+    sys.exit(0 if ok else 1)
+
+
