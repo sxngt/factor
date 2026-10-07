@@ -279,3 +279,91 @@ def parse_param(text: str) -> tuple[str, object]:
         return name.strip(), raw.strip()
 
 
+def probe_main(argv=None) -> None:
+    """``factor-fr3-probe``: driver reachability, parameters and a servo motion check.
+
+    드라이버 응답, 파라미터 설정, 서보 동작 확인.
+    """
+    ap = argparse.ArgumentParser(description="probe the FR3 driver's servo stream (j6 ±0.3 deg)")
+    ap.add_argument("--wait", type=float, default=6.0, help="seconds to wait for /joint_states")
+    ap.add_argument("--set", type=parse_param, action="append", default=[], metavar="NAME=VALUE")
+    ap.add_argument("--node", default="/fr_ros2_driver", help="driver node for --set")
+    ap.add_argument("--no-motion", action="store_true", help="only check /joint_states and set parameters")
+    ap.add_argument("--amplitude-deg", type=float, default=0.3)
+    args = ap.parse_args(argv)
+
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import JointState
+    from std_srvs.srv import Trigger
+
+    rclpy.init()
+    node = Node("factor_fr3_probe")
+    latest: dict = {}
+
+    def on_joints(msg) -> None:
+        d = dict(zip(msg.name, msg.position, strict=False))
+        if all(j in d for j in sdk.JOINTS):
+            latest["q"] = np.array([d[j] for j in sdk.JOINTS], dtype=float)
+
+    node.create_subscription(JointState, "/joint_states", on_joints, 10)
+
+    def spin_for(seconds: float) -> None:
+        t_end = time.time() + seconds
+        while time.time() < t_end:
+            rclpy.spin_once(node, timeout_sec=0.02)
+
+    def call(name: str) -> tuple[bool, str]:
+        client = node.create_client(Trigger, name)
+        if not client.wait_for_service(timeout_sec=3.0):
+            return False, f"{name} unavailable"
+        future = client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(node, future, timeout_sec=5.0)
+        result = future.result()
+        return (False, f"{name} timed out") if result is None else (result.success, result.message)
+
+    code = 1
+    try:
+        t0 = time.time()
+        while "q" not in latest and time.time() - t0 < args.wait:
+            rclpy.spin_once(node, timeout_sec=0.1)
+        if "q" not in latest:
+            print(f"no /joint_states within {args.wait:.0f} s (driver not running?)")
+            return
+        if args.set and not _set_parameters(node, args.node, args.set):
+            return
+        if args.no_motion:
+            print("driver up")
+            code = 0
+            return
+
+        call("/fr/reset_error")
+        spin_for(0.5)
+        ok, message = call("/fr/servo_start")
+        if not ok:
+            print(f"servo start refused: {message}")
+            return
+        pub = node.create_publisher(JointState, "/fr/servo_target", 10)
+        q0 = latest["q"].copy()
+        peak = 0.0
+        for offset in probe_offsets(amplitude_deg=args.amplitude_deg):
+            msg = JointState()
+            msg.header.stamp = node.get_clock().now().to_msg()
+            msg.name = list(sdk.JOINTS)
+            q = q0.copy()
+            q[5] += offset
+            msg.position = [float(v) for v in q]
+            pub.publish(msg)
+            spin_for(0.02)
+            peak = max(peak, abs(math.degrees(latest["q"][5] - q0[5])))
+        spin_for(0.5)
+        call("/fr/servo_stop")
+        moved = peak > 0.1
+        print(f"j6 peak excursion {peak:.3f} deg -> {'MOVED' if moved else 'NOT MOVED'}")
+        code = 0 if moved else 1
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+        sys.exit(code)
+
+
