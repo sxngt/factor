@@ -367,3 +367,29 @@ def probe_main(argv=None) -> None:
         sys.exit(code)
 
 
+def _set_parameters(node, target: str, params: list[tuple[str, object]]) -> bool:
+    """Set parameters of another node through its ``set_parameters`` service. / 다른 노드 파라미터 설정."""
+    import rclpy
+    from rcl_interfaces.srv import SetParameters
+    from rclpy.parameter import Parameter
+
+    client = node.create_client(SetParameters, f"{target}/set_parameters")
+    if not client.wait_for_service(timeout_sec=3.0):
+        print(f"{target}/set_parameters unavailable")
+        return False
+    request = SetParameters.Request()
+    request.parameters = [Parameter(name, value=value).to_parameter_msg() for name, value in params]
+    future = client.call_async(request)
+    rclpy.spin_until_future_complete(node, future, timeout_sec=5.0)
+    response = future.result()
+    if response is None:
+        print("set_parameters timed out")
+        return False
+    ok = True
+    for (name, value), result in zip(params, response.results, strict=False):
+        if not result.successful:
+            print(f"parameter {name}={value} refused: {result.reason}")
+            ok = False
+    if ok:
+        print("parameters set: " + ", ".join(f"{n}={v}" for n, v in params))
+    return ok
