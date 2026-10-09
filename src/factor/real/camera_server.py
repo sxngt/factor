@@ -148,3 +148,92 @@ class Webcam:
         self.cap.release()
 
 
+def main(argv=None) -> None:
+    """``factor-camera``: own the camera and publish frames. / 카메라를 소유하고 프레임 발행."""
+    ap = argparse.ArgumentParser(description="shared-frame camera server (webcam)")
+    ap.add_argument(
+        "--dir", default=os.environ.get("CAM_DIR", DEFAULT_DIR), help="output directory (env CAM_DIR)"
+    )
+    ap.add_argument("--device", type=int, default=0, help="/dev/videoN")
+    ap.add_argument("--width", type=int, default=2592)
+    ap.add_argument("--height", type=int, default=1944)
+    ap.add_argument("--fps", type=int, default=30, help="capture rate requested from the device")
+    ap.add_argument("--hz", type=float, default=10.0, help="publish rate")
+    ap.add_argument("--intrinsics", default="", help="calibration JSON (width, height, K)")
+    ap.add_argument("--frames", type=int, default=0, help="stop after N frames (0 = run until Ctrl-C)")
+    ap.add_argument(
+        "--alive", action="store_true", help="only report whether a server is publishing (exit 0/1)"
+    )
+    ap.add_argument(
+        "--stall-seconds", type=float, default=20.0, help="reopen the device after identical frames"
+    )
+    args = ap.parse_args(argv)
+
+    if args.alive:
+        sys.exit(0 if server_alive(args.dir) else 1)
+    if server_alive(args.dir):
+        sys.exit(f"factor-camera: {args.dir}/latest.json is being updated by another server")
+
+    cam = Webcam(args.device, args.width, args.height, args.fps)
+    intrinsics = load_intrinsics(args.intrinsics, cam.width, cam.height)
+    print(f"factor-camera: {cam.mode} -> {args.dir}", flush=True)
+
+    period = 1.0 / args.hz
+    n = 0
+    t0 = time.time()
+    t_next = t0
+    same = 0
+    last_signature = None
+    try:
+        while True:
+            rgb = cam.read()
+            if time.time() < t_next:
+                continue
+            t_next = time.time() + period
+            # Some webcams freeze and repeat one frame forever: reopen the device.
+            # 일부 웹캠은 한 프레임을 반복하며 멈춘다: 장치를 다시 연다.
+            signature = rgb[::97, ::89].tobytes()
+            same = same + 1 if signature == last_signature else 0
+            last_signature = signature
+            if same >= int(args.hz * args.stall_seconds):
+                print("factor-camera: identical frames, reopening the device", flush=True)
+                cam.close()
+                time.sleep(1.0)
+                cam = Webcam(args.device, args.width, args.height, args.fps)
+                same = 0
+                continue
+            n += 1
+            publish_frame(
+                rgb,
+                n,
+                args.dir,
+                owner="factor-camera",
+                intrinsics=intrinsics,
+                backend="webcam",
+                mode=cam.mode,
+            )
+            if n % max(1, int(args.hz) * 30) == 0:
+                print(f"frames {n} ({n / (time.time() - t0):.1f} Hz)", flush=True)
+            if args.frames and n >= args.frames:
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        cam.close()
+        print("factor-camera: closed", flush=True)
+
+
+# ----------------------------------------------------------------------------- recorder
+
+
+def repeats_for_gap(gap_s: float, fps: float, cap: int = 5) -> int:
+    """How many times to write a frame so the video keeps wall-clock time. / 실시간 유지를 위한 반복 수.
+
+    The camera publishes slower than the video rate; a frame that arrived ``gap_s`` after the
+    previous one is written ``round(gap_s * fps)`` times (at least 1, at most ``cap``).
+    """
+    if gap_s <= 0.0:
+        return 1
+    return min(cap, max(1, int(round(gap_s * fps))))
+
+
