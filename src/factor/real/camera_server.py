@@ -86,3 +86,65 @@ def server_alive(cam_dir: str = DEFAULT_DIR, max_age: float = 2.0) -> bool:
     return meta is not None and time.time() - float(meta.get("t", 0.0)) < max_age
 
 
+def load_intrinsics(path: str, width: int, height: int) -> list[float] | None:
+    """``[fx, fy, cx, cy]`` from a calibration JSON if its resolution matches.
+
+    보정 JSON 의 해상도가 카메라와 같을 때만 내부 파라미터를 돌려준다.
+    """
+    if not path:
+        return None
+    with open(path, encoding="utf-8") as f:
+        calib = json.load(f)
+    if (int(calib["width"]), int(calib["height"])) != (int(width), int(height)):
+        size = f"{calib['width']}x{calib['height']}"
+        print(f"[camera] {path}: {size} != camera {width}x{height}; intrinsics not used", flush=True)
+        return None
+    if "K" in calib:
+        k = calib["K"]
+        return [float(k[0][0]), float(k[1][1]), float(k[0][2]), float(k[1][2])]
+    return [float(calib[key]) for key in ("fx", "fy", "cx", "cy")]
+
+
+# ----------------------------------------------------------------------------- webcam
+
+
+class Webcam:
+    """UVC webcam through OpenCV. / OpenCV 일반 웹캠.
+
+    Resolution and rate are requests; the device may fall back to what it supports, which is
+    reported (and used) as the actual mode.
+    해상도·속도는 요청값이며 장치가 지원하는 값으로 떨어질 수 있다(실제 값을 보고).
+    """
+
+    def __init__(self, device: int = 0, width: int = 2592, height: int = 1944, fps: int = 30):
+        import cv2
+
+        self.cv2 = cv2
+        api = cv2.CAP_V4L2 if sys.platform.startswith("linux") else cv2.CAP_ANY
+        self.cap = cv2.VideoCapture(device, api)
+        if not self.cap.isOpened():
+            raise RuntimeError(f"camera {device} did not open (check the device number and other users)")
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FPS, fps)
+        self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.fps = float(self.cap.get(cv2.CAP_PROP_FPS))
+        if (self.width, self.height) != (width, height):
+            print(
+                f"[camera] requested {width}x{height}@{fps}, got {self.width}x{self.height}@{self.fps:.0f}",
+                flush=True,
+            )
+        self.mode = f"webcam {self.width}x{self.height}@{self.fps:.0f}"
+
+    def read(self) -> np.ndarray:
+        ok, bgr = self.cap.read()
+        if not ok or bgr is None:
+            raise RuntimeError("webcam frame grab failed")
+        return self.cv2.cvtColor(bgr, self.cv2.COLOR_BGR2RGB)
+
+    def close(self) -> None:
+        self.cap.release()
+
+
