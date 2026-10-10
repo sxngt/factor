@@ -237,3 +237,60 @@ def repeats_for_gap(gap_s: float, fps: float, cap: int = 5) -> int:
     return min(cap, max(1, int(round(gap_s * fps))))
 
 
+def record_main(argv=None) -> None:
+    """``factor-record``: write the shared frames to an mp4. / 공유 프레임을 mp4 로 녹화."""
+    import cv2
+
+    ap = argparse.ArgumentParser(description="record the camera server's frames to mp4")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--dir", default=os.environ.get("CAM_DIR", DEFAULT_DIR))
+    ap.add_argument("--fps", type=float, default=10.0)
+    ap.add_argument("--max-sec", type=float, default=3600.0)
+    ap.add_argument("--scale", type=float, default=0.5)
+    args = ap.parse_args(argv)
+
+    stop = {"now": False}
+
+    def request_stop(*_):
+        stop["now"] = True
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+
+    writer = None
+    last_n = -1
+    written = 0
+    t0 = time.time()
+    t_last = 0.0
+    while not stop["now"] and time.time() - t0 < args.max_sec:
+        meta = read_meta(args.dir)
+        if meta is None or meta.get("n") == last_n or time.time() - float(meta.get("t", 0)) > 2.0:
+            time.sleep(0.02)
+            continue
+        with open(os.path.join(args.dir, "latest_color.png"), "rb") as f:
+            data = f.read()
+        if meta.get("color_sha256") and hashlib.sha256(data).hexdigest() != meta["color_sha256"]:
+            continue
+        bgr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        if bgr is None:
+            continue
+        last_n = meta.get("n")
+        if args.scale != 1.0:
+            bgr = cv2.resize(bgr, None, fx=args.scale, fy=args.scale, interpolation=cv2.INTER_AREA)
+        if writer is None:
+            os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+            size = (bgr.shape[1], bgr.shape[0])
+            writer = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"), args.fps, size)
+            print(f"recording {args.out} {size[0]}x{size[1]}", flush=True)
+        now = time.time()
+        for _ in range(repeats_for_gap(now - t_last if t_last else 0.0, args.fps)):
+            writer.write(bgr)
+            written += 1
+        t_last = now
+    if writer is not None:
+        writer.release()
+    print(f"saved {args.out}: {written} frames, {time.time() - t0:.0f} s", flush=True)
+
+
+if __name__ == "__main__":
+    main()
