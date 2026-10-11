@@ -1,0 +1,14 @@
+# deployed local-label ensemble (loc_s5_gen2, loc_s6_gen2, loc_s8_app20), 14 s, 64 envs x 600 steps, Fri Oct 16 03:53:18 KST 2026
+err 0.004 cam 0.03 ensemble | [twin] 600 steps x 64 envs in 56s  episodes 806: {'succeeded': 804, 'dropped': 0, 'bad_release': 2, 'timeout': 0}  success 99.8%  time-outs while {'holding': 0, 'free': 0}
+err 0.004 cam 0.08 ensemble | [twin] 600 steps x 64 envs in 56s  episodes 745: {'succeeded': 744, 'dropped': 0, 'bad_release': 0, 'timeout': 1}  success 99.9%  time-outs while {'holding': 1, 'free': 0}
+err 0.004 cam 0.12 ensemble | [twin] 600 steps x 64 envs in 56s  episodes 763: {'succeeded': 761, 'dropped': 0, 'bad_release': 0, 'timeout': 2}  success 99.7%  time-outs while {'holding': 2, 'free': 0}
+err 0.006 cam 0.03 ensemble | [twin] 600 steps x 64 envs in 55s  episodes 709: {'succeeded': 708, 'dropped': 0, 'bad_release': 0, 'timeout': 1}  success 99.9%  time-outs while {'holding': 1, 'free': 0}
+err 0.006 cam 0.08 ensemble | [twin] 600 steps x 64 envs in 56s  episodes 701: {'succeeded': 698, 'dropped': 0, 'bad_release': 0, 'timeout': 3}  success 99.6%  time-outs while {'holding': 3, 'free': 0}
+err 0.006 cam 0.12 ensemble | [twin] 600 steps x 64 envs in 55s  episodes 687: {'succeeded': 685, 'dropped': 0, 'bad_release': 0, 'timeout': 2}  success 99.7%  time-outs while {'holding': 2, 'free': 0}
+err 0.008 cam 0.03 ensemble | [twin] 600 steps x 64 envs in 55s  episodes 635: {'succeeded': 628, 'dropped': 0, 'bad_release': 0, 'timeout': 7}  success 98.9%  time-outs while {'holding': 7, 'free': 0}
+err 0.008 cam 0.08 ensemble | [twin] 600 steps x 64 envs in 55s  episodes 606: {'succeeded': 603, 'dropped': 0, 'bad_release': 0, 'timeout': 3}  success 99.5%  time-outs while {'holding': 2, 'free': 1}
+err 0.008 cam 0.12 ensemble | [twin] 600 steps x 64 envs in 55s  episodes 570: {'succeeded': 557, 'dropped': 0, 'bad_release': 0, 'timeout': 13}  success 97.7%  time-outs while {'holding': 11, 'free': 2}
+err 0.010 cam 0.03 ensemble | [twin] 600 steps x 64 envs in 55s  episodes 410: {'succeeded': 390, 'dropped': 0, 'bad_release': 0, 'timeout': 20}  success 95.1%  time-outs while {'holding': 17, 'free': 3}
+err 0.010 cam 0.08 ensemble | [twin] 600 steps x 64 envs in 54s  episodes 428: {'succeeded': 409, 'dropped': 0, 'bad_release': 0, 'timeout': 19}  success 95.6%  time-outs while {'holding': 16, 'free': 3}
+err 0.010 cam 0.12 ensemble | [twin] 600 steps x 64 envs in 54s  episodes 399: {'succeeded': 384, 'dropped': 1, 'bad_release': 1, 'timeout': 13}  success 96.2%  time-outs while {'holding': 12, 'free': 1}
+# done Fri Oct 16 04:06:52 KST 2026
