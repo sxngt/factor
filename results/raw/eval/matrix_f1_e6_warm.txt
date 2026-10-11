@@ -1,0 +1,18 @@
+# best model f1_e6_warm, 14 s episodes, 64 envs x 600 steps, Fri Oct 16 00:07:32 KST 2026
+err 0.004 cam 0.03 model | [twin] 600 steps x 64 envs in 55s  episodes 743: {'succeeded': 740, 'dropped': 0, 'bad_release': 2, 'timeout': 1}  success 99.6%  time-outs while {'holding': 0, 'free': 1}
+err 0.004 cam 0.08 model | [twin] 600 steps x 64 envs in 55s  episodes 679: {'succeeded': 674, 'dropped': 0, 'bad_release': 1, 'timeout': 4}  success 99.3%  time-outs while {'holding': 4, 'free': 0}
+err 0.004 cam 0.08 nominal | [twin] 600 steps x 64 envs in 52s  episodes 546: {'succeeded': 536, 'dropped': 0, 'bad_release': 0, 'timeout': 10}  success 98.2%  time-outs while {'holding': 8, 'free': 2}
+err 0.004 cam 0.12 model | [twin] 600 steps x 64 envs in 55s  episodes 700: {'succeeded': 699, 'dropped': 0, 'bad_release': 0, 'timeout': 1}  success 99.9%  time-outs while {'holding': 1, 'free': 0}
+err 0.006 cam 0.03 model | [twin] 600 steps x 64 envs in 55s  episodes 684: {'succeeded': 680, 'dropped': 0, 'bad_release': 1, 'timeout': 3}  success 99.4%  time-outs while {'holding': 2, 'free': 1}
+err 0.006 cam 0.08 model | [twin] 600 steps x 64 envs in 54s  episodes 664: {'succeeded': 663, 'dropped': 0, 'bad_release': 0, 'timeout': 1}  success 99.8%  time-outs while {'holding': 1, 'free': 0}
+err 0.006 cam 0.08 nominal | [twin] 600 steps x 64 envs in 51s  episodes 271: {'succeeded': 234, 'dropped': 0, 'bad_release': 0, 'timeout': 37}  success 86.3%  time-outs while {'holding': 28, 'free': 9}
+err 0.006 cam 0.12 model | [twin] 600 steps x 64 envs in 55s  episodes 606: {'succeeded': 598, 'dropped': 0, 'bad_release': 1, 'timeout': 7}  success 98.7%  time-outs while {'holding': 7, 'free': 0}
+err 0.008 cam 0.03 model | [twin] 600 steps x 64 envs in 54s  episodes 541: {'succeeded': 534, 'dropped': 0, 'bad_release': 0, 'timeout': 7}  success 98.7%  time-outs while {'holding': 6, 'free': 1}
+err 0.008 cam 0.08 model | [twin] 600 steps x 64 envs in 54s  episodes 530: {'succeeded': 522, 'dropped': 0, 'bad_release': 0, 'timeout': 8}  success 98.5%  time-outs while {'holding': 8, 'free': 0}
+err 0.008 cam 0.08 nominal | [twin] 600 steps x 64 envs in 50s  episodes 179: {'succeeded': 125, 'dropped': 1, 'bad_release': 0, 'timeout': 53}  success 69.8%  time-outs while {'holding': 37, 'free': 16}
+err 0.008 cam 0.12 model | [twin] 600 steps x 64 envs in 53s  episodes 469: {'succeeded': 456, 'dropped': 0, 'bad_release': 1, 'timeout': 12}  success 97.2%  time-outs while {'holding': 11, 'free': 1}
+err 0.010 cam 0.03 model | [twin] 600 steps x 64 envs in 53s  episodes 394: {'succeeded': 381, 'dropped': 1, 'bad_release': 0, 'timeout': 12}  success 96.7%  time-outs while {'holding': 7, 'free': 5}
+err 0.010 cam 0.08 model | [twin] 600 steps x 64 envs in 56s  episodes 404: {'succeeded': 387, 'dropped': 0, 'bad_release': 0, 'timeout': 17}  success 95.8%  time-outs while {'holding': 15, 'free': 2}
+err 0.010 cam 0.08 nominal | [twin] 600 steps x 64 envs in 50s  episodes 135: {'succeeded': 73, 'dropped': 1, 'bad_release': 0, 'timeout': 61}  success 54.1%  time-outs while {'holding': 43, 'free': 18}
+err 0.010 cam 0.12 model | [twin] 600 steps x 64 envs in 54s  episodes 350: {'succeeded': 329, 'dropped': 0, 'bad_release': 0, 'timeout': 21}  success 94.0%  time-outs while {'holding': 14, 'free': 7}
+# done Fri Oct 16 00:25:13 KST 2026
