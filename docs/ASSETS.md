@@ -86,3 +86,25 @@ fills the hole). Semantic class `ring` is not required; the twin tags the prims 
 링 6개(ring0 가장 큼). 외경·두께·질량은 장면 파일 값. 충돌 형상은 구멍을 막지 않아야 한다
 (볼록 분해 또는 볼록 조각 링; 단일 볼록 껍질은 구멍을 메운다).
 
+## Mat / 매트
+
+`assets/usd/mat.usd`: a 297 × 210 mm plane (A4 landscape) whose origin is the tower origin
+(centre peg axis), textured with the printed ArUco mat. The marker layout must match
+`fiducials` in the scene file (ids, centres, 40 mm size), so that the twin's renders decode to
+the same ids at the same places as the real camera: with the reference scene, marker id 5
+appears at the top centre of the canonical view in both (see `SIM2REAL.md` §1 for why this
+check is by marker identity). Flip the texture until it does; the twin's anchor frame is the
+mat frame rotated by the anchor yaw.
+
+297×210 mm 평면, 원점 = 탑 원점, 인쇄한 ArUco 매트 텍스처. 마커 배치는 장면 파일 `fiducials` 와
+같아야 하며, 트윈 렌더와 실제 카메라에서 같은 id 가 같은 자리에 보여야 한다(기준 장면: id 5 가 정규화
+시야 위쪽 가운데).
+
+## Real-robot side / 실기 쪽
+
+The real loop needs no meshes: kinematics come from `robot.kinematics` in the scene file and
+the camera intrinsics from `camera`. The gripper ArUco board for self-calibration is described
+by `configs/gripper_board.json` (print it at 100 % and tape it flat on the gripper side facing
+the camera).
+
+실기 루프는 메시가 필요 없다: 기구학은 장면 파일 `robot.kinematics`, 카메라 내부 파라미터는 `camera`.
