@@ -124,3 +124,33 @@ tests/            unit tests (no GPU, no ROS, no robot)
 docs/             architecture, sim-to-real log, run registry, assets
 ```
 
+## Documentation / 문서
+
+* [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the layers, the twin and the simulation results.
+* [docs/SIM2REAL.md](docs/SIM2REAL.md): what broke on the robot and what changed; pre-run checklist.
+* [docs/RUNS.md](docs/RUNS.md): every training run and its artefacts.
+* [docs/ASSETS.md](docs/ASSETS.md): simulation assets.
+* [CONTRIBUTING.md](CONTRIBUTING.md): development workflow.
+
+## Status / 상태
+
+Pre-alpha, but end to end: scene specification, Isaac Lab twin, supervised estimator training
+with DAgger, fiducial detection, estimator server, active self-calibration, the FR3 ROS 2 driver
+and the `factor-run` loop. First real moves on the FR3 are logged in `docs/SIM2REAL.md`.
+
+## Citing / 인용
+
+If you use FACTOR, please cite:
+
+```bibtex
+@software{factor2026,
+  author = {sxngt},
+  title  = {{FACTOR}: Fiducial-Anchored Canonical views for calibration-free Transfer Of precise Robot manipulation},
+  year   = {2026},
+  url    = {https://github.com/sxngt/factor}
+}
+```
+
+## License
+
+MIT (see `LICENSE`). Vendor meshes and SDKs referenced here keep their own licenses.
