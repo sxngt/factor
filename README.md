@@ -44,3 +44,24 @@ Three dependencies cannot come from PyPI:
   the controller firmware (tested: SDK v2.1.6, firmware v3.8.6). Only the real driver and the
   `factor-fr3-*` tools import it; `factor-fr3-driver --fake` runs without it.
 
+## Quick start in simulation / 시뮬레이션 빠른 시작
+
+The twin needs the robot, ring and mat USD files; [docs/ASSETS.md](docs/ASSETS.md) explains
+what they are and how to build them from the vendor descriptions. With an assets root `<root>`
+(the directory containing `assets/usd/...`), inside the Isaac Lab Python:
+
+```
+# teacher smoke test: success close to 100 %
+python -m factor.sim.isaaclab.check --scene configs/hanoi.yaml --assets <root> --num_envs 32 --headless
+
+# train the state estimator on twin frames (teacher collection + DAgger rounds)
+python -m factor.perception.train --scene configs/hanoi.yaml --assets <root> \
+    --num_envs 96 --steps 1000 --dagger_rounds 2 --out estimator.pt --headless
+
+# evaluate it in the twin
+python -m factor.sim.isaaclab.check --scene configs/hanoi.yaml --assets <root> \
+    --checkpoint estimator.pt --num_envs 32 --headless
+```
+
+Training recipes and results of every run: [docs/RUNS.md](docs/RUNS.md).
+
