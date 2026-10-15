@@ -105,3 +105,40 @@ not a variable to randomise: `extras.hanoi.peg_row_offset` in the scene file (me
 makes placing far more sensitive than picking (6 mm finger clearance), which is why the pick
 succeeded first.
 
+## 10. What anchors the belief / 믿음의 기준 (the decisive finding)
+
+The twin aimed its camera at the *believed* anchor centre, so a belief error showed up as a
+displaced tower in the canonical view. On the robot the view is anchored by the detected board,
+so the tower is always centred and the network saw no error at all: every real placement used
+the stale anchor constants unchanged (the ~5 mm misses). Two ways out were tried in the wrong
+order: aiming through calibrated camera extrinsics (works only until the camera is moved, which
+the user does deliberately to test placement robustness) and manual touch calibration
+(defeats "calibration-free"). The right formulation, now in the twin: the camera aims at the
+*true* centre as the detection does, and the belief error is observable only through the
+gripper, which moves in the believed frame. The estimator learns to read the gripper's
+displacement relative to the pegs and rings; no extrinsics, no pendant. Camera placement
+randomisation widened to ±8 cm. Models trained before `twin: camera aims at the true anchor
+centre` cannot work on the robot for this reason.
+
+## 11. The belief must be an input / 믿음은 입력이어야 한다
+
+With the camera aimed at the true centre (§10), an image-only estimator stays at chance (x/y MSE
+≈ 0.13 for labels uniform in ±0.6): under the teacher the gripper sits exactly where it should,
+so the image alone carries no trace of the belief error. The error is the difference between
+where the gripper *is* (visible) and where the robot *thinks* it is (proprioception). Two inputs
+now carry the belief: the believed grip point as a vector, and a **belief render channel** — the
+believed finger segment drawn into the canonical view through the virtual camera, the
+"kinematic render channel" of the architecture computed from the robot's own belief instead of
+the true scene. Local check (48 envs, 400 steps, 25 epochs): x MSE 0.16 → 0.049 with the channel
+(0.034 for y). Both are computable on the robot without camera calibration.
+
+## 12. Height is not observable from one view / 높이는 단일 시야로 보이지 않는다
+
+Training with a ±3 mm height belief error (`--anchor_z 0.003`, fourth output) leaves the height
+estimate at chance (near-peg RMS 1.8 mm for labels with σ 1.73 mm) and worsens y (1.66 vs 1.4 mm):
+with a single fixed camera looking down at ~61°, a height error and a depth (y) error move the
+fingers along the same image direction. The fingertip-depth issue seen on the robot (fingers
+closing on the ring's rim) is therefore a job for contact, not vision: descend until the fingers
+meet resistance, or verify the grasp height from the servo deviation. Deployment models keep
+three outputs.
+
