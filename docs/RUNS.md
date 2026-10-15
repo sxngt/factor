@@ -52,3 +52,24 @@ Common training recipe unless noted: 128 envs, teacher collection 800 steps, 2 D
 | skill_pc_mask | 10-15 | A | residual PPO, 64 envs, 150 it, frozen pc_mask | baseline 94.7; evals 95.8 / 92.7 / 94.9 / 92.9 / 95.0 / 94.9 | `robot-arm/logs/factor/skill_pc_mask.{pt,log}` |
 | yaw_local_e6 | 10-15 17:12 | B | ±6 mm/0.5°, cam ±2 cm, no mask, 64 envs, 800 + 300 steps, 40 + 20 epochs | 98.5 % (used for the first real moves, see SIM2REAL.md) | `robot-arm/logs/factor/yaw_local_e6.{pt,log}`, figs `yaw_local_e6_figs/` — first real-robot candidate |
 
+## Evaluation-only numbers / 평가 전용 수치
+
+`factor.sim.isaaclab.check` on a saved checkpoint (local, twin A unless noted). See
+`ARCHITECTURE.md` for the discussion.
+
+| checkpoint | setting | episodes | success | note |
+|------------|---------|----------|---------|------|
+| off_e6 | ±6 mm, 8 s | 382 | 95.0 % | 18 time-outs, all while holding (insertion) |
+| off_e6 | same, + outer search ring | 400 | 97.5 % | |
+| off_e6 | same, + lift-and-retry | 420 | 99.5 % | |
+| off_e6 | same, 909 episodes | 909 | 98.3 % | 9 bad releases (grip-target entry check) |
+| off_e6 | same, ring-based entry | 862 | 97.6 % | 21 time-outs, 0 bad releases |
+| off_e6 | same, 14 s episodes | 1148 | 99.9 % | |
+| pc_mask | ±8 mm/1°, cam ±3 cm, 8 s | 342 | 96.2 % | before retry |
+| pc_mask | same, + retry | 341 | 97.9 % | |
+| pc_mask | same, 14 s | 516 | 99.6 % | |
+| ho02_mask | ±8 mm/1°, in-hand ±4 mm, 8 s | 748 | 96.8 % | offset estimate not used |
+| ho02_mask | same, offset estimate used | 698 | 95.4 % | |
+| ho02_mask | same, 14 s | 1000 | 99.9 % | |
+| teacher | any | — | 100 % | twin A and B |
+
