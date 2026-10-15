@@ -48,3 +48,60 @@ that holds the ROS 2 driver and the assets).
   shared one `xmlrpc.ServerProxy` → `CannotSendRequest` ended the servo stream exactly at
   release. Fixed with a lock around SDK calls.
 
+## 5. Servo stream safety trips / 서보 안전 트립
+
+- **Symptom**: "추종 편차 2.4° > 2.0°" within 0.1–0.4 s of every servo start; the robot did not
+  move, or crept in bursts between restarts (the "털털털" motion).
+- **Cause**: the driver ramps the commanded joints at `max_joint_speed_deg` (150°/s → 2.4° per
+  16 ms tick) while ServoJ starts moving only after ~100 ms; the SafetyMonitor tolerance
+  (`start_tol_deg` 2°) is smaller than one ramp step. The servo probe (±0.3°) never triggers it.
+- **Fix**: driver parameters set by `robot-arm/tools/factor_real.sh` on every run:
+  `start_tol_deg 8`, `max_joint_speed_deg 40`, `servo_timeout 3`. Measured afterwards: a 10 mm
+  Cartesian step converges in 0.5 s with zero steady-state error.
+- Also: `/fr/reset_error` before every servo start (a stopped controller ignores ServoJ), and
+  the loop restarts the stream after 20 ticks without motion.
+
+## 6. Loop-side motion quality / 루프 쪽 동작 품질
+
+Three iterations, each diagnosed from the telemetry log:
+
+| version | behaviour | cause |
+|---------|-----------|-------|
+| target += step (integrated) | target ran 30 cm away while the servo was tripped | no feedback from the measured pose |
+| target = grip + step (1 step ahead) | crawl at 5 mm/s, stop-and-go chatter | each tick waits for the robot to reach a 2 mm target |
+| target = integrated, lead-capped 12 mm | ±8 mm oscillation around the object (2.5 s period) | the integrated target overshot the planner's point |
+| **target = planner point, ≤ 12 mm ahead of the measured grip** (`lead`) | continuous motion, stops at the point | — |
+
+The planner's own target point (`PlannerCommand.target`, now also `SkillCommand.target`) is the
+right thing to command; the lead bounds the speed (~2.4 cm/s) and runaway.
+
+## 7. Physical contact the kinematic twin never had / 트윈에 없던 접촉
+
+- **Symptom**: with the fingers already around the ring, lateral corrections of 3–5 mm pushed
+  against the stack (the servo deviation absorbed it; the loop dithered for 30 s).
+- **Cause**: in the twin the grasp is a kinematic attach; fingers never collide with the ring.
+- **Fix** (`planning`: `freeze_xy_below`, in both the NumPy and the torch planner): below the
+  object centre + 7.5 mm no lateral motion while picking, straight descent only (mirror of the
+  insertion rule). Teacher still 100 % in the twin.
+
+## 8. Grasp verification / 파지 검증
+
+- The controller's gripper width feedback is unusable (reports the commanded 12 mm with a
+  25 mm ring between the fingers).
+- The estimator's state head was right on the robot: p(grasped) 0.98–1.0 while a ring was held,
+  0.00–0.04 after an empty lift. The loop now averages five verdicts once the grip point is
+  15 mm above the grasp height and reopens for a new pick if the mean is below 0.5 (≤ 3 retries,
+  logged as `empty grasp, retry n`).
+
+## 9. First successful move / 첫 성공
+
+18:48: ring5 picked from the right peg (lateral error 0.1 mm at the grasp height, grasp at
+z = 71.8 mm), lifted, carried to the middle peg and released at the goal height; 144 ticks
+(14 s) at 20 % speed. The seating missed by a small margin: the ring stalled on the peg top a
+few millimetres towards the robot (+y in the base frame) while the contact search ran. The
+tower is attached to the mat, so a tower-versus-markers offset is a fixed calibration constant,
+not a variable to randomise: `extras.hanoi.peg_row_offset` in the scene file (measured once) and
+`factor-run --place-offset x,y,z` (mm, base frame) for quick trials. The 1 mm ring clearance
+makes placing far more sensitive than picking (6 mm finger clearance), which is why the pick
+succeeded first.
+
