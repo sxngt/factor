@@ -129,3 +129,105 @@ Relative asset paths in `extras.sim` resolve against `--assets`. The robot USD, 
 fiducial mat currently live in the research repository; they will move into this repository once
 their mesh references are made relative.
 
+## Results so far / 현재 결과
+
+**Caveat (2026-10-15 evening).** Every number below was produced with the twin camera on the wrong
+side of the mat: the real camera stands beyond the mat (anchor +y) and looks back at the robot,
+the configuration had it at −y, and the twin ignored the anchor yaw (≈180°). Canonical views
+were therefore mirrored between simulation and robot. The twin now honours the anchor yaw and the
+scene file carries the calibrated camera pose; the simulation study (ablations, skill rules,
+occlusion heads) remains valid as a controlled experiment, but the checkpoints are not
+deployable and are being retrained.
+
+Package twin, 2026-10-15 (a 4×RTX 4090 server, 128 envs, 800 + 2x300 steps, 60/30 epochs):
+
+| run | anchor error | mask channel | res | round 0 | best |
+|-----|--------------|--------------|-----|---------|------|
+| pc_mask | ±8 mm, ±1° | yes | 128 | 93.0 % | 94.0 % |
+| pc_nomask | ±8 mm, ±1° | no | 128 | 93.0 % | 94.0 % |
+| pc_mask_e10 | ±10 mm, ±2° | yes | 128 | 91.1 % | 92.9 % |
+| pc_mask_r160 | ±8 mm, ±1° | yes | 160 | 93.7 % | 95.1 % |
+| ab_nolatch | ±8 mm, ±1° | yes | 128 | 62.6 % | 62.6 % |
+| ab_nonudge | ±8 mm, ±1° | yes | 128 | 83.8 % | 86.3 % |
+| mild_e6 | ±6 mm, ±0.5°, cam ±2 cm | yes | 128 | 95.1 % | 95.7 % |
+| long_r160 | ±8 mm, ±1° | yes | 160 | 95.0 % | 95.0 % |
+| off_mask | ±8 mm, ±1° | yes | 128 | 93.4 % | 94.8 % |
+| off_nomask | ±8 mm, ±1° | no | 128 | 94.1 % | 94.6 % |
+| off_e6 | ±6 mm, ±0.5°, cam ±2 cm | yes | 128 | 95.8 % | 95.8 % |
+| off_r160 | ±8 mm, ±1° | yes | 160 | 95.2 % | 95.2 % |
+| ho02_mask (in-hand ±4 mm twin, offset head 0.02 m, offset used) | ±8 mm, ±1° | yes | 128 | 96.1 % | 96.1 % |
+| ho02_nomask (same, no mask) | ±8 mm, ±1° | no | 128 | 95.9 % | 96.9 % |
+
+Camera randomisation ±3 cm, appearance gain ±40 %, bias ±0.08, noise 0.05. Teacher 100 %,
+rule-only (no correction) 29.6 % at ±8 mm. Single-factor sweep of the no-mask checkpoint
+(48 envs x 400 steps, belief fixed per episode): full 96.1 %, no camera randomisation 97.1 %,
+no yaw 96.8 %, no appearance 97.7 %, all off 98.1 %, ±4 mm 99.5 % — the remaining failures are
+time-outs on large-error episodes, not a single randomisation factor. Ablations: removing the
+height latch drops success to 62.6 % and removing the contact search to 86.3 %, so both the
+occlusion handling and the insertion search carry the result. The mask channel in its
+current form (binary robot silhouette) does not change the outcome; the occlusion-aware
+estimator planned next (ring-to-gripper offset head, expected-render channel) is the real test.
+
+Ring-to-grip offset head (`off_*` runs, label = ring centre minus grip point in the believed
+frame, kinematic attach so the held label was still zero): validation RMS of the held-ring
+offset 3.2 mm with the robot-mask channel, 6.5 mm without (4.5 mm in the mild setting); free-ring
+RMS about 31 mm in all three (the free range is ±100 mm). The mask channel is the first thing
+that moves this number, which is the occlusion case. The twin now attaches a ring with a
+physical in-hand offset (the pre-grasp error along the finger axis is kept, across it the fingers
+centre the ring) and held-start episodes sample ±3 mm, so the question was whether the
+estimated offset, used when placing (`--use_offset_estimate`), recovers the success lost to it.
+Teacher check (24 envs, 250 steps): with ±3 mm held-start offsets 100 % both with and without
+the offset, with ±5 mm 99.3 % without and 99.2 % with: the contact search absorbs in-hand
+offsets of this size. Trained in the in-hand-offset twin with the head rescaled to 0.02 m
+(`ho02_mask`), the held-ring offset RMS stays at 2.6–2.8 mm, which is the spread of the labels
+themselves (uniform ±4 mm along the finger axis), i.e. the head does not recover the in-hand
+offset from a 128 px view under the gripper. Using it in the planner lowers success (same
+checkpoint, 96 envs x 600 steps, ±8 mm/1°, in-hand ±4 mm): 96.8 % without the offset estimate,
+95.4 % with it. Without the mask channel the same run reaches 96.9 % but its state head is less accurate
+(0.907 vs 0.935) and its held-offset RMS worse (3.5 vs 2.7 mm): the robot-mask channel helps the
+two occlusion heads consistently, without moving success. Conclusion for this task: the in-hand
+offset is handled by contact search and retry, not by perception; the occlusion-relevant perception outputs are the anchor correction
+while the gripper hides the scene, and the grasp verdict.
+
+Occlusion overlay videos (`factor.sim.isaaclab.render_video`, 4 environments tiled, the
+estimated ring outline in green against the true outline in blue while the gripper hides the
+ring): `logs/factor/overlay_pc_mask.mp4` and `logs/factor/overlay_off_e6.mp4` in the research
+repository; the estimate stays within 0.5–2.5 mm of the truth through the grasp.
+
+Where the failures are: with the `check` time-out breakdown, every time-out of the trained
+estimators happens while holding, i.e. during insertion — the correction latched below the
+hover height is off by more than the contact search could reach. Two rule changes in the skill
+layer (both in the twin and in the robot skill) fix most of it:
+
+| estimator, setting | before | + outer search ring (±4.5 mm) | + lift-and-retry |
+|--------------------|--------|-------------------------------|------------------|
+| off_e6, ±6 mm/0.5°, cam ±2 cm | 95.0 % (18 time-outs) | 97.5 % (8) | **99.5 %** (0, 2 bad releases) |
+| pc_mask, ±8 mm/1°, cam ±3 cm | 96.2 % (11) | 96.2 % (11) | **97.9 %** (6) |
+| off_mask, ±8 mm/1°, cam ±3 cm | 95.7 % (14) | — | — |
+
+(64 envs x 400 steps, local; teacher stays at 100 %.) Larger samples with both rules: pc_mask at
+±8 mm/1° with 14 s episodes 99.6 % (516 episodes); off_e6 at ±6 mm 98.3 % (909 episodes) before
+and 97.6 % (862 episodes, all 21 failures insertion time-outs, no bad releases) after the peg entry
+check was moved from the grip target to the held ring (the in-hand offset now has to clear the peg
+physically, which is what the real ring does). With a 14 s episode budget (the robot
+has no 8 s limit) and both rules: ho02_mask at ±8 mm/1°, cam ±3 cm, in-hand ±4 mm **99.9 %**
+(999/1000), off_e6 at ±6 mm/0.5°, cam ±2 cm **99.9 %** (1147/1148, one drop). Lift-and-retry:
+when the whole search pattern has been tried, the held object rises to the hover height, waits five steps so the
+correction filter can refresh above the latch, and descends again with the updated estimate.
+
+Residual skill fine-tuning (PPO, 64 envs, 150 iterations of 32 steps, frozen pc_mask
+estimator, ±2 mm residual): rule-skill baseline 94.7 %, evaluations at 25-iteration intervals
+95.8 / 92.7 / 94.9 / 92.9 / 95.0 / 94.9 % (about 310 episodes each, so ±1.3 % standard error).
+On the server (128 envs, frozen off_e6, mild setting) the same picture: baseline 94.6 %, then
+95.1 / 93.7 / 94.8 % at iterations 50/100/150 with more bad releases, stopped. No significant
+gain in either run: the remaining time-outs are perception errors that a ±2 mm residual without
+image input cannot repair in 8 s. The two rule changes above (wider search, lift-and-retry)
+recovered far more than the learned residual, so the skill layer stays rule-based for now and the
+RL path is kept as an option with a search-rewarding objective.
+
+Grasp verification from the state head (`holding_from_estimate`): with the pc_mask checkpoint,
+8 s episodes 96.4 % (vs 95.6 % with the gripper command as the holding proxy) but 14 s episodes
+93.9 % (vs 97.6 %), with new bad releases — the 93 % accurate state head produces false
+"not held" verdicts that make the planner drop a held ring. Kept opt-in until the state head is
+more reliable (temporal smoothing, ring-offset head).
+
