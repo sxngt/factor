@@ -8,6 +8,13 @@
 합니다. 작업대의 피듀셜 매트가 시뮬레이터와 실기의 관측을 같은 규약으로 고정하므로, 카메라를 옮겨도
 다시 보정할 필요가 없습니다.
 
+## 실기
+
+<p align="center"><img src="docs/media/real_robot.gif" width="100%" alt="하노이 링을 옮기는 FR3, 4배속"></p>
+<p align="center"><img src="docs/media/factor_live.gif" width="100%" alt="라이브 뷰: 믿는 장면과 보정 추정, 정규화 시야, 신호, 2배속"></p>
+<p align="center"><sub>ArUco 매트 위의 FAIRINO FR3 + AG-95(4배속) · 루프 라이브 뷰: 믿는 장면과 보정된 장면,
+추정기가 보는 정규화 시야와 신호(2배속)</sub></p>
+
 <p align="center"><img src="docs/figures/fig1_overview.svg" width="100%" alt="FACTOR 개요"></p>
 
 ## 아이디어
@@ -21,10 +28,10 @@
 
 ## 환경
 
+<p align="center"><img src="docs/media/sim_scene.jpg" width="100%" alt="Isaac Lab의 FACTOR 트윈"></p>
 <p align="center">
-  <img src="docs/media/sim_scene.jpg" height="220" alt="Isaac Lab 트윈">
-  <img src="docs/media/canonical_views.jpg" height="220" alt="무작위화된 정규화 시야">
-  <img src="docs/media/occlusion_overlay.jpg" height="220" alt="가림 상태의 추정 윤곽과 실제 윤곽">
+  <img src="docs/media/canonical_views.jpg" width="49%" alt="무작위화된 정규화 시야">
+  <img src="docs/media/occlusion_overlay.jpg" width="49%" alt="가림 상태의 추정 윤곽과 실제 윤곽">
 </p>
 <p align="center"><sub>Isaac Lab의 FACTOR 트윈(FR3 + AG-95, ArUco 매트 위 하노이탑) · 카메라 위치·조준·외관을 무작위화한
 정규화 시야 · 그리퍼가 링을 가린 순간의 추정 윤곽과 실제 윤곽</sub></p>

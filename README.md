@@ -8,6 +8,13 @@ Millimetre-precision pick-and-place from **one fixed third-person RGB camera**, 
 simulation. A fiducial mat on the table anchors the observations of the simulator and the real robot
 to the same convention, so the camera can be moved without re-calibration.
 
+## Real robot
+
+<p align="center"><img src="docs/media/real_robot.gif" width="100%" alt="FR3 moving Tower of Hanoi rings, 4x speed"></p>
+<p align="center"><img src="docs/media/factor_live.gif" width="100%" alt="Live view: believed scene, corrected estimate, canonical view and signals, 2x speed"></p>
+<p align="center"><sub>FAIRINO FR3 + AG-95 on the ArUco mat (4×) · live view of the loop: believed vs. corrected scene,
+the estimator's canonical view and its signals (2×)</sub></p>
+
 <p align="center"><img src="docs/figures/fig1_overview.svg" width="100%" alt="FACTOR overview"></p>
 
 ## Idea
@@ -22,10 +29,10 @@ to the same convention, so the camera can be moved without re-calibration.
 
 ## Environment
 
+<p align="center"><img src="docs/media/sim_scene.jpg" width="100%" alt="FACTOR twin in Isaac Lab"></p>
 <p align="center">
-  <img src="docs/media/sim_scene.jpg" height="220" alt="Isaac Lab twin">
-  <img src="docs/media/canonical_views.jpg" height="220" alt="Randomised canonical views">
-  <img src="docs/media/occlusion_overlay.jpg" height="220" alt="Estimated vs. true ring outline under occlusion">
+  <img src="docs/media/canonical_views.jpg" width="49%" alt="Randomised canonical views">
+  <img src="docs/media/occlusion_overlay.jpg" width="49%" alt="Estimated vs. true ring outline under occlusion">
 </p>
 <p align="center"><sub>FACTOR twin in Isaac Lab (FR3 + AG-95, Tower of Hanoi on the ArUco mat) · canonical views under camera,
 aim and appearance randomisation · occlusion: estimated ring outline vs. truth while the gripper hides the ring</sub></p>

@@ -18,3 +18,7 @@ logs/
 
 # paper drafts stay local until review / 논문 원고는 심사 전까지 로컬에만
 docs/paper/
+
+# local source videos / 원본 영상
+*.mov
+*.MOV
