@@ -25,10 +25,10 @@ to the same convention, so the camera can be moved without re-calibration.
 <p align="center">
   <img src="docs/media/sim_scene.jpg" height="220" alt="Isaac Lab twin">
   <img src="docs/media/canonical_views.jpg" height="220" alt="Randomised canonical views">
-  <img src="docs/media/robot_recolour.jpg" height="220" alt="Robot recolour randomisation">
+  <img src="docs/media/occlusion_overlay.jpg" height="220" alt="Estimated vs. true ring outline under occlusion">
 </p>
-<p align="center"><sub>Isaac Lab twin (FR3, AG-95, Tower of Hanoi on an ArUco mat) · canonical views under camera,
-aim and appearance randomisation · robot-recolour randomisation</sub></p>
+<p align="center"><sub>Isaac Lab twin (FR3 + AG-95, earlier scene without the mat) · canonical views under camera,
+aim and appearance randomisation · occlusion: estimated ring outline vs. truth while the gripper hides the ring</sub></p>
 
 ## Architecture
 

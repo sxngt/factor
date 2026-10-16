@@ -24,10 +24,10 @@
 <p align="center">
   <img src="docs/media/sim_scene.jpg" height="220" alt="Isaac Lab 트윈">
   <img src="docs/media/canonical_views.jpg" height="220" alt="무작위화된 정규화 시야">
-  <img src="docs/media/robot_recolour.jpg" height="220" alt="로봇 재색칠 무작위화">
+  <img src="docs/media/occlusion_overlay.jpg" height="220" alt="가림 상태의 추정 윤곽과 실제 윤곽">
 </p>
-<p align="center"><sub>Isaac Lab 트윈(FR3, AG-95, ArUco 매트 위 하노이탑) · 카메라 위치·조준·외관을 무작위화한
-정규화 시야 · 로봇 재색칠 무작위화</sub></p>
+<p align="center"><sub>Isaac Lab 트윈(FR3 + AG-95, 매트가 없는 이전 장면) · 카메라 위치·조준·외관을 무작위화한
+정규화 시야 · 그리퍼가 링을 가린 순간의 추정 윤곽과 실제 윤곽</sub></p>
 
 ## 구조
 
