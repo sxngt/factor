@@ -72,3 +72,60 @@ quantities. The Isaac Lab implementation is being migrated from the research rep
 joint state, grip point, inverse kinematics for the grasp posture, and a streaming joint target.
 `real.safety.WorkspaceBox` clamps every commanded grip point before inverse kinematics.
 
+## Robustness layer / 강건성 층 (2026-10-16)
+
+- **Belief as input.** The canonical view is anchored by the fiducial detection, so it shows the
+  true scene; the robot's belief enters as proprioception (believed grip point) and as a belief
+  render channel (the believed finger segment, optionally both fingers, drawn into the view).
+  The estimator reads "real fingers vs drawn belief" — no camera calibration involved.
+- **Foveation.** The view is centred on the active peg (source while picking, goal while
+  holding) through the detected anchor.
+- **Session estimation and probing** (`perception/session.py`, `RealLoop.probe`). The belief
+  error is a constant of the session. Before acting, the robot looks at the source and goal pegs
+  from five hover poses, fuses the estimates with inverse-variance weights (model log-variance +
+  ensemble spread + a noise floor), rejects outliers, and acts on the fused value. A move whose
+  fused standard error stays above `--max-stderr` (0.8 mm) is refused, not executed.
+- **Ensembles.** The estimator server accepts comma-separated checkpoints (same resolution,
+  channels, view width, proprio input and label convention), averages them and reports spread.
+- **Local labels** (`--local_correction`). The correction is the translation that is exact at the
+  peg in view, yaw folded in; probing fuses per peg.
+- **Height.** `--anchor_z` adds a height belief error (anchor z, tool length) and a fourth output.
+- **Hindsight self-labelling** (`real/recorder.py`, `perception/finetune_real.py`). With
+  `factor-run --record DIR` every successful move writes its frames with labels derived from
+  where the fingers closed (pick) and where the ring went down the peg (place); the fine-tuning
+  script adapts a local-label checkpoint to real images with an L2 pull to the simulation
+  weights. No human labelling.
+
+## Learning plan / 학습 계획
+
+1. Estimator: supervised on twin frames (labels = sampled anchor error, contact state).
+2. Skills: rule-based planner and NUDGE as initialisation; PPO fine-tuning in the contact twin
+   with the estimator in the loop (reward: success, insertion time, contact force).
+3. Evaluation: success over anchor error × camera placement × appearance randomisation in the
+   twin, then the same grid on the robot.
+
+## Running the twin / 트윈 실행
+
+Inside the Isaac Lab Python environment, with the package installed (`pip install -e .`):
+
+```
+# teacher rollout: must be ~100 %; --nominal gives the rule-only baseline
+python -m factor.sim.isaaclab.check --scene configs/hanoi.yaml --assets <repo with assets/usd> \
+    --num_envs 32 --steps 300 --headless [--nominal] [--no_mask] [--save out_dir]
+
+# supervised estimator training (frames from the twin, labels = sampled belief error)
+python -m factor.perception.train --scene configs/hanoi.yaml --assets <repo with assets/usd> \
+    --num_envs 96 --steps 1000 --dagger_rounds 1 --out estimator.pt --headless
+
+# PPO fine-tuning of the residual skill with the frozen estimator in the loop
+python -m factor.sim.isaaclab.train_skill --scene configs/hanoi.yaml --assets <repo with assets/usd> \
+    --estimator estimator.pt --num_envs 128 --iterations 150 --out skill.pt --headless
+```
+
+The skill trainer prints the rule-skill baseline first (the zero-initialised policy), then the
+training success every five iterations and a deterministic evaluation every `--eval_every`.
+
+Relative asset paths in `extras.sim` resolve against `--assets`. The robot USD, ring USDs and the
+fiducial mat currently live in the research repository; they will move into this repository once
+their mesh references are made relative.
+
