@@ -108,6 +108,7 @@ class NudgeSearch:
         # Not blocked if the arm already sits at the height it was told: the planner itself is holding
         # or creeping (lateral alignment, slow insert). Only a lag behind the command is a stall.
         # 명령한 높이에 이미 있으면 막힌 것이 아니다 (계획기가 정렬 중이거나 천천히 내리는 중).
+        # 명령보다 뒤처질 때만 정체로 센다. (2026-10-16 실기: 정렬 중 오인 → 끝없는 나선 탐색)
         if commanded is not None and grip_height - commanded < self.blocked_lag:
             moved = True
         self._stall = 0 if moved else self._stall + 1
