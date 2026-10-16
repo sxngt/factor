@@ -190,3 +190,31 @@ Last polishing runs (training evaluation, 8 s): final_s8 99.2 %, final_s14 99.0 
 final_s15 98.8 %, final_e8 98.4 %, final_e8b 98.1 %, final_e10 96.5 % (±10 mm). Campaign ended 06:40
 (queue drained; runner exits at 08:10). Spare ensemble members for the robot: final_s8, final_s14.
 
+## Robot-recolour runs (2026-10-16 12:51 → 13:29) / 로봇 재색칠 run
+
+All four use `--local_correction --robot_recolor`. The warm starts are 20 epochs each; rc_scratch
+is 30 epochs. Training-time evaluation, ±8 mm:
+
+| run | init | recolor / appearance | near-peg RMS x,y (mm) | best success |
+|---|---|---|---|---|
+| rc_s5 | final_s5 | 0.6 / 1.5 | 0.89, 1.41 | 99.2 % |
+| rc_s6 | final_s6 | 0.6 / 1.5 | 0.97, 1.49 | 98.7 % |
+| rc_s8 | loc_s8_app20 | 0.8 / 2.0 | 0.88, 1.48 | 99.0 % |
+| rc_scratch | — | 0.8 / 2.0 | 1.35, 1.74 | 98.3 % |
+
+Real-frame belief response is the change of the estimate per mm of belief shift. It was measured on
+4 live frames with the grip 95 mm above the plate (13:35):
+
+| model | x-shift → x | y-shift → y |
+|---|---|---|
+| factor_loc1–5 (deployed) | −0.01 | 0.39 |
+| rc_s5 / rc_s6 / rc_s8 | 0.11 / −0.09 / 0.02 | 0.47 / 0.72 / 0.65 |
+| rc_scratch | 0.13 | 0.60 |
+| rc_s5+s6+s8 | 0.01 | 0.62 |
+
+y responds better after recolouring, and x still does not. The test height is far from the pegs,
+so it is not decisive; it should be repeated with the grip near a peg. The deployment stays loc1–5.
+
+## Self-calibration, synthetic (2026-10-16) / 자기보정 합성 실험
+
+See SIM2REAL.md §13 for the table: active 0.23 mm, random 0.31 mm, blind 0.45 mm at 60 s (20 seeds).
