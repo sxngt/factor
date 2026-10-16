@@ -15,7 +15,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon, Rectangle  # noqa: E402
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch  # noqa: E402
 
 OUT = os.path.dirname(os.path.abspath(__file__))
 plt.rcParams.update(
@@ -30,16 +30,16 @@ plt.rcParams.update(
 )
 
 # Palette by role / 역할별 색
-INK = "#1f2328"
-MUTED = "#57606a"
-ROLE = {
-    "shared": ("#eef1f4", "#8c959f"),
-    "sim": ("#e3edf8", "#3b6ea8"),
-    "real": ("#fbeee0", "#b8732d"),
-    "learn": ("#efe7f7", "#7451a8"),
-    "rule": ("#e6f2ea", "#3f8a5a"),
-    "io": ("#ffffff", "#57606a"),
-    "warn": ("#fdecec", "#b54747"),
+INK = "#1f1f1f"
+MUTED = "#5c5c5c"
+ROLE = {  # grayscale only: learned parts get a light fill, everything else is outlined
+    "shared": ("#ffffff", "#3a3a3a"),
+    "sim": ("#ffffff", "#3a3a3a"),
+    "real": ("#ffffff", "#3a3a3a"),
+    "learn": ("#e4e4e4", "#1f1f1f"),
+    "rule": ("#ffffff", "#1f1f1f"),
+    "io": ("#ffffff", "#6e6e6e"),
+    "warn": ("#ffffff", "#3a3a3a"),
 }
 
 
@@ -108,11 +108,10 @@ def group(ax, x0, y0, x1, y1, label, role="shared", dash=True, label_side="top-l
         x1 - x0,
         y1 - y0,
         boxstyle="round,pad=0,rounding_size=1.6",
-        fc=fc,
-        ec=ec,
-        lw=0.8,
+        fc="#f5f5f5",
+        ec="#9a9a9a",
+        lw=0.7,
         ls=(0, (4, 2)) if dash else "-",
-        alpha=0.45,
         zorder=1,
     )
     ax.add_patch(p)
@@ -299,98 +298,6 @@ def fig_overview():
     save(fig, "fig1_overview")
 
 
-# ============================================================================ Fig. 2 frames
-def fig_frames():
-    import math
-
-    fig, ax, top = canvas(7.0, 2.25)
-
-    def frame(x, y, name, color, ang=0.0, size=4.2, lx=-1.2, ly=-1.2, ha="right"):
-        ca, sa = math.cos(math.radians(ang)), math.sin(math.radians(ang))
-        arrow(ax, (x, y), (x + size * ca, y + size * sa), color="#c0392b", lw=1.0, shrink=0)
-        arrow(ax, (x, y), (x - size * sa, y + size * ca), color="#27864a", lw=1.0, shrink=0)
-        ax.plot([x], [y], "o", ms=3.2, color=color, zorder=6)
-        ax.text(x + lx, y + ly, name, fontsize=9.5, color=color, ha=ha, va="top", fontweight="bold", zorder=6)
-
-    # work table, ArUco mat, tower / 작업대, 매트, 탑
-    ax.add_patch(
-        Polygon([[24, 2.5], [80, 2.5], [86, 14], [30, 14]], closed=True, fc="#f3f4f6", ec="#c9ced4", lw=0.7)
-    )
-    ax.add_patch(
-        Polygon([[42, 4.5], [64, 4.5], [67.5, 11.5], [45.5, 11.5]], closed=True, fc="white", ec=INK, lw=0.6)
-    )
-    for mx, my in ((44.8, 5.5), (54, 5.5), (62.6, 5.5), (48, 10.4), (57, 10.4), (65.6, 10.4)):
-        ax.add_patch(Rectangle((mx - 1.0, my - 0.55), 2.0, 1.1, fc=INK, ec=INK, lw=0.2))
-    ax.add_patch(
-        Polygon(
-            [[47, 7.2], [62, 7.2], [62.9, 8.8], [47.9, 8.8]], closed=True, fc="#e8d3b0", ec="#9c7a4b", lw=0.5
-        )
-    )
-    for px in (50.5, 55.5, 60.5):
-        ax.add_patch(Rectangle((px - 0.35, 8.0), 0.7, 6.5, fc="#d9b98a", ec="#9c7a4b", lw=0.4, zorder=3))
-    for k, (w, c) in enumerate(((4.6, "#7a4fb0"), (3.9, "#2f9e5e"), (3.2, "#e2532d"), (2.5, "#f2c12e"))):
-        ax.add_patch(Rectangle((50.5 - w / 2, 8.7 + k * 0.85), w, 0.85, fc=c, ec="none", zorder=4))
-    # robot / 로봇
-    ax.add_patch(Rectangle((4, 2.5), 10, 3.2, fc="#dfe3e8", ec=MUTED, lw=0.6))
-    ax.plot(
-        [9, 10.5, 27, 38.5], [5.7, 19.5, 24.5, 21.0], color="#8c959f", lw=5, solid_capstyle="round", zorder=2
-    )
-    ax.plot([38.5, 38.5], [21.0, 17.6], color=INK, lw=2.4, zorder=2)
-    ax.plot([37.6, 37.6], [17.6, 15.8], color=INK, lw=1.0)
-    ax.plot([39.4, 39.4], [17.6, 15.8], color=INK, lw=1.0)
-    # camera / 카메라
-    ax.add_patch(Polygon([[90.5, 26.5], [97, 29.5], [97, 23.5]], closed=True, fc="#2d333b", ec=INK, lw=0.5))
-    ax.text(97, 22.2, "webcam", fontsize=6.6, color=MUTED, ha="right", va="top")
-    frame(9, 5.7, "B", INK, lx=-1.4, ly=-0.6)
-    frame(55.5, 8.0, "A", ROLE["rule"][1], size=3.6, lx=3.2, ly=-0.9, ha="left")
-    frame(50.0, 3.3, r"$\hat{A}$", ROLE["learn"][1], ang=-7, size=3.6, lx=-0.9, ly=0.9)
-    frame(90.5, 26.5, "C", ROLE["real"][1], ang=205, size=3.6, lx=1.2, ly=-1.6, ha="left")
-    # transforms / 변환
-    arrow(ax, (12.5, 4.6), (48.8, 3.0), color=ROLE["learn"][1], rad=0.08, ls="--")
-    ax.text(
-        30,
-        1.0,
-        r"belief $\hat{T}_{BA}$  (set once per session)",
-        fontsize=7,
-        color=ROLE["learn"][1],
-        ha="center",
-        style="italic",
-    )
-    arrow(ax, (88.6, 25.2), (57.2, 9.8), color=ROLE["real"][1], rad=-0.12)
-    ax.text(
-        80,
-        15.6,
-        r"$T_{CA}$ from ArUco PnP," + "\n" + "every frame",
-        fontsize=7,
-        color=ROLE["real"][1],
-        ha="left",
-        style="italic",
-        linespacing=1.1,
-    )
-    arrow(ax, (10.8, 8.5), (88.4, 27.6), color=MUTED, rad=-0.22, ls=":")
-    ax.text(
-        58,
-        31.0,
-        r"$T_{BC}$: not needed to build the view",
-        fontsize=7,
-        color=MUTED,
-        ha="center",
-        style="italic",
-    )
-    arrow(ax, (50.4, 3.5), (55.0, 7.7), color=ROLE["warn"][1], lw=1.1, shrink=0.3)
-    ax.text(
-        70,
-        3.6,
-        r"belief error $(\Delta x,\Delta y,\Delta\psi)$" + "\n" + "= what the estimator learns",
-        fontsize=7,
-        color=ROLE["warn"][1],
-        ha="left",
-        style="italic",
-        linespacing=1.1,
-    )
-    save(fig, "fig2_frames")
-
-
 # ============================================================================ Fig. 3 estimator
 def fig_estimator():
     fig, ax, top = canvas(7.0, 2.75)
@@ -560,7 +467,6 @@ def fig_selfcalib():
 
 if __name__ == "__main__":
     fig_overview()
-    fig_frames()
     fig_estimator()
     fig_training()
     fig_realloop()
