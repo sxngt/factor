@@ -7,7 +7,7 @@ robot:
   urdf: assets/urdf/fr3_ag95.urdf       # meshes through package:// URIs, see docs/ASSETS.md
   joint_names: [j1, j2, j3, j4, j5, j6]
   grip_offset: [0.0, 0.0, 0.0015]      # tool tip -> grip point (ring centre when held)
-  kinematics:
+  kinematics:                           # calibrated classic-DH set (controller fit, 2026-10-07)
     d1: 0.14
     a2: -0.280491
     a3: -0.239929
@@ -55,19 +55,19 @@ objects:
   - { name: ring5, asset: assets/rings/ring5.usd, mass: 0.010, grasp_half_gap: 0.0135, extents: [0.025, 0.025, 0.007] }
 
 # Believed anchor pose in the robot base frame (from fiducial calibration). / 로봇 베이스 기준 앵커 포즈(피듀셜 보정값).
-anchor_in_base:
+anchor_in_base:                         # 2026-10-16 14:55: user centred the gripper on the start peg (anchor +x) by eye; origin = grip - R(0.06, 0)
   xyz: [-0.0733, -0.4811, 0.0239]
   rpy_deg: [0.0, 0.0, -178.96]
 
 # Nominal camera pose in the anchor frame (used to build the simulation twin). / 앵커 기준 공칭 카메라 포즈(트윈용).
-camera_in_anchor:
+camera_in_anchor:                       # full calibrated pose: inv(anchor_in_base) @ camera_in_base (ArUco extrinsics 2026-10-15)
   xyz: [0.0723, 0.3906, 0.7113]            # the camera stands beyond the mat (anchor +y) and looks back at the robot
   rpy_deg: [-152.318, -4.736, 175.000]
 
 extras:
   task: hanoi
   hanoi:
-    peg_spacing: 0.060
+    peg_spacing: 0.060                                    # user measurement 2026-10-15 (centre to centre; an earlier note said 58 mm)
     peg_row_offset: [0.0, 0.0]                            # the tower sits on the printed outline (user-confirmed); belief errors are corrected by the estimator
     peg_height: 0.055
     plate_thickness: 0.007
