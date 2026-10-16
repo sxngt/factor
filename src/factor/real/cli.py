@@ -179,6 +179,7 @@ def main() -> None:
         hover_height=anchor_to_base(anchor, [0.0, 0.0, layout.hover_height])[2],
         zone_top=anchor_to_base(anchor, [0.0, 0.0, layout.zone_top])[2],
         use_offset_estimate=args.use_offset,
+        # 2026-10-16: on real frames the grasp head said "empty" (p 0.32) while holding the ring,
         # so the loop dropped it three times. Off unless asked. / 실기에서 잡고도 빈손 판정 → 기본 끔.
         verify_grasp=args.verify_grasp,
         nudge=args.nudge,
