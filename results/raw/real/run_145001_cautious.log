@@ -1,0 +1,37 @@
+[factor_real 14:50:00] 라이브 뷰어 http://localhost:8780
+14:50:20
+[PASS] controller      192.168.57.2 상태를 logs/fr_status.json 로 수신 (상태 포트 20004 는 다른 프로세스가 점유)
+[PASS] versions        robot ['FR3-V1-001(V6.0)', 'v3.8.6', 'V3.8.37-QX']  sdk ['SDK:V2.1.6', 'Robot:V3.8.6']
+[PASS] e-stop          정상
+[PASS] safety stop     SI0/SI1 정상
+[PASS] collision       없음
+[PASS] error code      0/0
+[PASS] soft limits     관절 리밋 안
+[INFO] mode/state      AUTO  robot_state=1(Stopped)  program=stopped  motion_done=1
+[PASS] servo enable    활성
+[PASS] joint torque    max 0.2 Nm
+[INFO] joints(deg)     [69.35, -61.05, 51.58, -80.53, -90.0, -111.69]
+[INFO] flange(mm,deg)  [-71.5, -480.2, 323.9, 180.0, 0.0, -89.0]
+[INFO] gripper         active pos 39% fault 0
+==> READY
+result code 0  j6 peak excursion 0.286 deg  → MOVED
+[factor_real 14:50:36] factor-run: python3 -m factor.real.cli --scene configs/hanoi.yaml --checkpoint logs/factor/factor_loc1.pt,logs/factor/factor_loc2.pt,logs/factor/factor_loc3.pt,logs/factor/factor_loc4.pt,logs/factor/factor_loc5.pt --stacks left:;middle:ring5;right:ring0,ring1,ring2,ring3,ring4 --goal left --moves 63 --step-scale 0.3 --cam-dir logs/cam --live logs/factor/live --log logs/factor/real_20261016_145001.json --no-correction --record logs/factor/real_data
+62 moves planned: ring4 right->left, ring5 middle->left, ring3 right->middle, ring5 left->right, ring4 left->middle, ring5 right->middle, ring2 right->left, ring5 middle->left, ring4 middle->right, ring5 left->right, ring3 middle->left, ring5 right->middle, ring4 right->left, ring5 middle->left, ring1 right->middle, ring5 left->right, ring4 left->middle, ring5 right->middle, ring3 left->right, ring5 middle->left, ring4 middle->right, ring5 left->right, ring2 left->middle, ring5 right->middle, ring4 right->left, ring5 middle->left, ring3 right->middle, ring5 left->right, ring4 left->middle, ring5 right->middle, ring0 right->left, ring5 middle->left, ring4 middle->right, ring5 left->right, ring3 middle->left, ring5 right->middle, ring4 right->left, ring5 middle->left, ring2 middle->right, ring5 left->right, ring4 left->middle, ring5 right->middle, ring3 left->right, ring5 middle->left, ring4 middle->right, ring5 left->right, ring1 middle->left, ring5 right->middle, ring4 right->left, ring5 middle->left, ring3 right->middle, ring5 left->right, ring4 left->middle, ring5 right->middle, ring2 right->left, ring5 middle->left, ring4 middle->right, ring5 left->right, ring3 middle->left, ring5 right->middle, ring4 right->left, ring5 middle->left
+== ring4: right -> left
+[factor-run] recorded logs/factor/real_data/move_20261016_145128.npz (seated True)
+   released
+== ring5: middle -> left
+[factor-run] recorded logs/factor/real_data/move_20261016_145342.npz (seated True)
+   released
+== ring3: right -> middle
+[factor-run] recorded logs/factor/real_data/move_20261016_145455.npz (seated True)
+   released
+== ring5: left -> right
+[factor-run] recorded logs/factor/real_data/move_20261016_145713.npz (seated True)
+   released
+== ring4: left -> middle
+[factor-run] recorded logs/factor/real_data/move_20261016_145827.npz (seated True)
+   released
+== ring5: right -> middle
+   max_steps
+[factor_real 15:01:11] 녹화 종료 → logs/cam/videos/factor_20261016_145036.mp4
