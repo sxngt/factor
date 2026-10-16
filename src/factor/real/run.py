@@ -74,6 +74,7 @@ class LoopConfig:
     # is only a few mm ahead; a stall means almost no motion for a while, not "slower than sim".
     # 실기 팔은 목표 근처에서 틱당 ~0.3 mm 로 천천히 내려간다: 정체 = 한동안 거의 정지.
     # A position-servoed arm does not stall on contact, so the stall signal is meaningless on the
+    # robot: off unless asked (2026-10-16: pauses read as stalls -> lift-and-search loops).
     # 위치 서보 팔은 접촉해도 멈추지 않아 정체 신호가 의미 없다: 기본 끔.
     nudge: bool = False
     nudge_progress: float = 0.0001
