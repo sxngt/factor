@@ -231,3 +231,30 @@ Grasp verification from the state head (`holding_from_estimate`): with the pc_ma
 "not held" verdicts that make the planner drop a held ring. Kept opt-in until the state head is
 more reliable (temporal smoothing, ring-offset head).
 
+## Running on the robot / 실기 실행
+
+The robot side runs in the ROS 2 Python (NumPy, OpenCV, Pillow); the estimator runs in a Python
+with PyTorch through `factor-serve`, launched automatically by the client:
+
+```
+factor-camera --dir logs/cam &                    # shared frames from the fixed webcam
+factor-fr3-driver --ip <controller IP> &          # ROS 2 servo-stream driver (ROS Python)
+FACTOR_TORCH_PYTHON=<python with torch> factor-run --scene configs/hanoi.yaml \
+    --checkpoint estimator.pt --stacks "left:ring0,...,ring5;middle:;right:" --goal right --dry
+# drop --dry to move; --step-scale 0.3 for the first run, --moves 1 for a single move
+```
+
+`scripts/run_real.sh` chains all of it (controller reset, preflight, driver parameters, servo
+probe, camera, viewer, recorder). / `scripts/run_real.sh` 가 전체를 이어 실행한다.
+
+`factor.real.run.RealLoop` is the same closed loop as the twin: fiducial detection → canonical
+view → estimator → fused correction → funnel planner with contact search → workspace clamp →
+grasp-posture IK → streamed joint target. The FR3 adapter (`factor.robots.fr3.ros_adapter`)
+talks to a driver exposing `/joint_states`, `/fr/servo_target`, `/fr/servo_start|stop`.
+
+## Conventions / 규약
+
+* Frames: anchor frame for task geometry, robot base frame for control. Corrections are rigid
+  2-D transforms of the anchor frame applied about its origin.
+* Units: metres, radians; degrees only in configuration keys that say `_deg`.
+* Comments: English first, Korean second, both carrying the same meaning.
