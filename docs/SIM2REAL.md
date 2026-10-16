@@ -142,3 +142,66 @@ closing on the ring's rim) is therefore a job for contact, not vision: descend u
 meet resistance, or verify the grasp height from the servo deviation. Deployment models keep
 three outputs.
 
+## 13. Session self-calibration / 세션 자기보정 (2026-10-16)
+
+**Problem.** ArUco gives the tower in the camera frame (T_CA). The robot needs it in its own base
+frame (T_BA = T_BC · T_CA). A constant T_BA in the scene file breaks as soon as the tower or the
+camera moves. The user moved both on purpose, and it cost the 10-16 real runs about 1 cm in y.
+**문제.** ArUco 는 카메라 기준 탑(T_CA)만 준다. 로봇에 필요한 것은 베이스 기준 탑(T_BA = T_BC·T_CA)이다.
+장면 파일의 고정 T_BA 는 탑이나 카메라가 움직이는 순간 틀린다.
+
+**Method** (`factor-selfcalib`, `src/factor/calib/`). A 2×2 ArUco board (ids 10–13, 25 mm) is taped
+to the gripper body. Within about 60 s the robot shows it to the camera:
+1. Prior: X₀ = T_BA(scene) · T_CA(now). It is weak (10°, 5 cm), so it only settles the first pose.
+2. First sighting: turn about the vertical until the board is detected. The mount Y = T_FG
+   initialises from it.
+3. Joint estimate: Levenberg–Marquardt over X = T_BC and Y = T_FG (12 parameters) on all corner
+   reprojections. Each pose is whitened by σ²I + J_f Σ_FK J_fᵀ, because a kinematic error moves all
+   16 corners of a pose together. Without this the estimate is overconfident and up to 2× worse.
+   The noise model inflates by χ²/dof when the data disagree.
+4. Prediction: for ~400 reachable candidates (grip ±7 cm, tilt ±28° about two axes, yaw ±60°)
+   predict visibility (in image, facing angle, marker size) and the information gain. The score
+   is log(σ²_now / σ²_after) / (move time + dwell). σ is the RMS 1σ of the six peg points in the
+   base frame through X · T_CA, the quantity the task needs, not X itself.
+5. Adjustment: a predicted-visible pose that the detector misses tightens the facing-angle limit
+   just above it, so the detector's real limit is learned within the session.
+6. Motion: minimum-jerk joint paths (≤24°/s, ≤36°/s²) over the servo stream. The robot settles,
+   then takes 2 fresh frames (the camera writes 2.7 fps).
+7. Output: anchor_in_base = X · mean(T_CA), plus leave-one-out spread, mount consistency and an
+   overlay image. `factor-run --calib FILE` uses it in place of the scene constant;
+   `tools/factor_real.sh --self-calib` chains both.
+
+**Why it is precise.** The gripper board and the mat are seen by the same camera at almost the
+same depth. Intrinsic and depth errors therefore largely cancel in X · T_CA. Calibrating in the
+task region with the task's own kinematics also absorbs local kinematic bias.
+**왜 정밀한가.** 그리퍼 보드와 매트를 같은 카메라가 거의 같은 깊이에서 보므로 내부 파라미터·깊이 오차가
+X·T_CA 에서 대부분 상쇄된다. 작업 영역에서 작업과 같은 기구학으로 보정하므로 국소 기구학 편향도 흡수된다.
+
+**Synthetic result** (20 seeds; camera moved ±4 cm/3°, tower ±2 cm/2°; corners 0.3 px; FK 0.2 mm/0.02°;
+peg-point RMS error vs. robot time, median (p90)):
+
+| strategy | 20 s | 30 s | 45 s | 60 s | poses in 60 s |
+|---|---|---|---|---|---|
+| active (ours) | 0.60 (0.96) | 0.45 (0.81) | 0.37 (0.59) | **0.23 (0.47)** | 12.8 |
+| random among predicted-visible | 1.11 (2.29) | 0.65 (1.32) | 0.44 (0.70) | 0.31 (0.63) | 10.9 |
+| random (blind) | 1.07 (3.26) | 0.62 (1.14) | 0.51 (0.75) | 0.45 (0.66) | 9.7 |
+
+Noise ablation (active, 60 s): corner noise only 0.02 mm, mat noise only 0.03 mm, FK noise only
+≈1 mm before whitening. The robot's kinematic accuracy is the floor, not the camera.
+End-to-end fake runs (real runner, fake robot, synthetic camera, real timing): 11–14 poses in
+61–68 s, truth error 0.17–0.31 mm from scene-file errors of 15–61 mm.
+Log: `logs/factor/selfcalib/sim_compare_20seeds.txt`.
+
+**Status.** Written and tested; it has not run on the robot yet. The gripper board is not attached
+(camera check 13:12). Print `assets/aruco/gripper_board.pdf` at 100 %, tape it flat on the gripper
+side that faces the camera, then run `tools/factor_real.sh --calib-only`.
+
+
+**2026-10-16 afternoon, real runs.** Two findings.
+- **Anchor:** fingertip sighting brought the anchor to within a few mm. The user then centred the gripper on the start peg by eye, a 5.5 cm correction in base y that the sighting had missed, because its y is very sensitive to the assumed tip height. Anchor xyz is now [-0.0733, -0.4811, 0.0239].
+- **Grasp verification:** with probing off (`--no-correction`), the pick worked. But the grasp head reported "not grasped" (mean p 0.32, max 0.5) while the ring was held, so the loop reopened and dropped it three times. Grasp verification is now off by default (`--verify-grasp` turns it on). The estimator's real-frame outputs (correction and grasp) are not trustworthy until the appearance gap is closed.
+
+**2026-10-16 14:49: first clean move on the user-centred anchor.** ring5, from the start peg to the middle peg, picked first time and seated (`--no-correction`). It needed two loop fixes:
+- **No-progress stall:** NUDGE's "no progress" stall read the arm's slow creep near the goal (about 0.3 mm per tick, because the streamed target is only 4 mm ahead) as contact. It hopped and searched forever 10–18 mm above the peg top. The real loop now uses less than 0.1 mm per tick for 6 ticks.
+- **Grasp verification:** this stays off (see above).
+
