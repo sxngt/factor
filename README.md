@@ -27,6 +27,20 @@ the estimator's canonical view and its signals (2×)</sub></p>
 - **Learn the residual, keep the rules.** Learning only says where the belief is wrong. A rule-based funnel
   planner with a height latch and lift-and-retry does the motion.
 
+## Why the Tower of Hanoi
+
+The task is the testbed, not the goal.
+
+- **It proves precision.** The 10 mm pegs leave about **1 mm of clearance** in the ring holes, so every
+  placement is a millimetre-level insertion that either seats or jams.
+- **The objects are easy to define.** Rings, pegs and the plate are simple primitives with known sizes,
+  so their URDF/USD models are exact and the twin matches the real parts.
+- **The task is unambiguous.** The state is three stacks, every legal move and goal pose follows from the
+  rules, and success is binary. A symbolic planner gives exact targets, so any error is a perception or
+  control error.
+
+Other tasks plug in through the same scene specification (`src/factor/tasks/`).
+
 ## Environment
 
 <p align="center"><img src="docs/media/sim_scene.jpg" width="100%" alt="FACTOR twin in Isaac Lab"></p>
