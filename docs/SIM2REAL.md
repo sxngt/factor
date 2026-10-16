@@ -205,3 +205,10 @@ side that faces the camera, then run `tools/factor_real.sh --calib-only`.
 - **No-progress stall:** NUDGE's "no progress" stall read the arm's slow creep near the goal (about 0.3 mm per tick, because the streamed target is only 4 mm ahead) as contact. It hopped and searched forever 10–18 mm above the peg top. The real loop now uses less than 0.1 mm per tick for 6 ticks.
 - **Grasp verification:** this stays off (see above).
 
+## Checklist before a real run / 실기 전 점검
+
+1. `scripts/run_real.sh --fake` (loop, camera, estimator, viewer, no motion).
+2. Canonical view marker ids match the twin (`id 5` top-centre for this mat).
+3. Driver up with the servo parameters above (`scripts/run_real.sh` sets them); servo probe MOVED.
+4. Gripper activated (the driver does it on the first command; fingers sweep once).
+5. Viewer at `http://localhost:8780`; recording in `logs/cam/videos/`.
